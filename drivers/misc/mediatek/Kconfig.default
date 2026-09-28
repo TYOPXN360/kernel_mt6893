@@ -129,7 +129,7 @@ config ANDROID_DEFAULT_SETTING
 	select MMU
 	select MODULES
 	select MODULE_UNLOAD
-	select MODVERSIONS
+	# select MODVERSIONS  # Android 17: ThinLTO cannot link the ___kcrctab ABS32 relocs
 	select MTK_AMMS
 	select MULTIUSER
 	select NAMESPACES

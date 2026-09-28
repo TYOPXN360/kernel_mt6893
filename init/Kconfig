@@ -1960,6 +1960,12 @@ config MODULE_FORCE_UNLOAD
 
 config MODVERSIONS
 	bool "Module versioning support"
+	# Android 17 build: this 4.14 tree is compiled with ThinLTO + clang,
+	# and the ___kcrctab R_AARCH64_ABS32 relocations that MODVERSIONS
+	# emits are rejected by lld against the merged vmlinux.o. No prebuilt
+	# .ko ships with the device (all modules build in-tree with matching
+	# vermagic), so module versioning buys nothing here.
+	depends on n
 	help
 	  Usually, you have to use modules compiled with your kernel.
 	  Saying Y here makes it sometimes possible to use modules

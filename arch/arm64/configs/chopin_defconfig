@@ -533,3 +533,7 @@ CONFIG_CFI_CLANG=y
 CONFIG_NETWORK_FILESYSTEMS=y
 # CONFIG_NFS_FS is not set
 # CONFIG_NFSD is not set
+# MODVERSIONS is incompatible with LTO on 4.14: the ___kcrctab R_AARCH64_ABS32
+# relocations are rejected by lld once objects are merged into vmlinux.o.
+# In-tree modules rebuild with the right vermagic; no prebuilt .ko ships.
+# CONFIG_MODVERSIONS is not set
