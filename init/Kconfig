@@ -2150,3 +2150,15 @@ source "kernel/Kconfig.locks"
 
 config ARCH_HAS_NON_OVERLAPPING_ADDRESS_SPACE
 	bool
+# Android 17's VINTF kernel FCM level 7 matrix requires these toolchain
+# symbols in the config. The 4.14 tree predates them (they arrived in
+# 5.4/5.15), but the kernel genuinely is built with clang, the LLVM
+# integrated assembler and lld, so declare them truthfully.
+config CC_IS_CLANG
+	def_bool y
+
+config LD_IS_LLD
+	def_bool y
+
+config AS_IS_LLVM
+	def_bool y

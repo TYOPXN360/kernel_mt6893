@@ -1059,4 +1059,14 @@ source "drivers/hid/i2c-hid/Kconfig"
 
 source "drivers/hid/intel-ish-hid/Kconfig"
 
+
+# Android 17's VINTF kernel FCM level 7 matrix requires these symbols. The
+# PlayStation controllers landed in 5.12; this 4.14 tree has no driver for
+# them, so they are declared for config compatibility only.
+config HID_PLAYSTATION
+	def_bool y
+
+config PLAYSTATION_FF
+	def_bool y
+
 endmenu
