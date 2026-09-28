@@ -662,6 +662,10 @@ void export_symbol(const char *name)
 		sym->expansion_trail = expansion_trail;
 		expansion_trail = sym;
 		crc = expand_and_crc_sym(sym, 0xffffffff) ^ 0xffffffff;
+		/* Android 17 build: emit a constant zero instead of a real CRC so
+		 * the linker assignment always exists and lld never sees an
+		 * undefined __crc_* reference when ThinLTO merges vmlinux.o. */
+		crc = 0;
 
 		sym = expansion_trail;
 		while (sym != (struct symbol *)-1L) {
