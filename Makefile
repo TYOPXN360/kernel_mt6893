@@ -518,6 +518,15 @@ GCC_TOOLCHAIN_DIR := $(dir $(shell which $(CROSS_COMPILE)elfedit))
 CLANG_FLAGS	+= --prefix=$(GCC_TOOLCHAIN_DIR)$(notdir $(CROSS_COMPILE))
 GCC_TOOLCHAIN	:= $(realpath $(GCC_TOOLCHAIN_DIR)/..)
 endif
+# Android 17's kernel.mk no longer passes CROSS_COMPILE (the gcc toolchain
+# prebuilts are gone), so the --target above would be skipped and clang would
+# compile this arm64 kernel for the host instead. Add it whenever the triple
+# is known, which keeps clang parsing (and assembling) for aarch64.
+ifeq ($(CROSS_COMPILE),)
+ifneq ($(CLANG_TRIPLE),)
+CLANG_FLAGS	+= --target=$(notdir $(CLANG_TRIPLE:%-=%))
+endif
+endif
 ifneq ($(GCC_TOOLCHAIN),)
 CLANG_FLAGS	+= --gcc-toolchain=$(GCC_TOOLCHAIN)
 endif
