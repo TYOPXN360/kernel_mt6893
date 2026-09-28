@@ -1200,7 +1200,17 @@ cmd_link-vmlinux =                                                 \
 	$(CONFIG_SHELL) $< $(LD) $(LDFLAGS) $(LDFLAGS_vmlinux) ;    \
 	$(if $(ARCH_POSTLINK), $(MAKE) -f $(ARCH_POSTLINK) $@, true)
 
-vmlinux: scripts/link-vmlinux.sh vmlinux_prereq $(vmlinux-deps) FORCE
+# Android 17 build: link-vmlinux.sh's lto_lds() consumes a top-level
+# built-in.a of all vmlinux inputs. The LTO support was backported here
+# along with the script, but not with the rule producing the archive.
+# Without it generate_initcall_order.pl dies and - more importantly - the
+# .symversions sweep finds no members, leaving every __crc_* assignment
+# out of the LTO linker script so lld rejects the kcrctab references.
+built-in.a: $(KBUILD_VMLINUX_INIT) $(KBUILD_VMLINUX_MAIN)
+	$(Q)rm -f $@
+	$(Q)$(AR) rcsT $@ $^
+
+vmlinux: scripts/link-vmlinux.sh built-in.a vmlinux_prereq $(vmlinux-deps) FORCE
 	+$(call if_changed,link-vmlinux)
 
 # Build samples along the rest of the kernel
