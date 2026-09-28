@@ -2162,3 +2162,19 @@ config LD_IS_LLD
 
 config AS_IS_LLVM
 	def_bool y
+
+# Android 17 VINTF kernel FCM level 7, second batch.
+# KFENCE arrived in 5.12 - declared for config compatibility, no code in
+# this tree ever references it.
+config KFENCE
+	def_bool y
+
+# FCM 7 requires these three to be absent; 4.14 here never had them.
+config ANDROID_LOW_MEMORY_KILLER
+	def_bool n
+
+config ANDROID_PARANOID_NETWORK
+	def_bool n
+
+config FW_CACHE
+	def_bool n
