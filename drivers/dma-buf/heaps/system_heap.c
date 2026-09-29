@@ -94,7 +94,7 @@ static struct sg_table *dup_sg_table(struct sg_table *table)
 	}
 
 	new_sg = new_table->sgl;
-	for_each_sg(table->sgl, sg, i, table->nents) {
+	for_each_sg(table->sgl, sg, table->nents, i) {
 		sg_set_page(new_sg, sg_page(sg), sg->length, sg->offset);
 		new_sg = sg_next(new_sg);
 	}
@@ -448,7 +448,7 @@ static void system_heap_buf_free(struct deferred_freelist_item *item,
 			reason = DF_UNDER_PRESSURE; // On failure, just free
 
 	table = &buffer->sg_table;
-	for_each_sg(table->sgl, sg, i, table->nents) {
+	for_each_sg(table->sgl, sg, table->nents, i) {
 		struct page *page = sg_page(sg);
 
 		if (reason == DF_UNDER_PRESSURE) {
@@ -595,7 +595,7 @@ static struct dma_buf *system_heap_do_allocate(struct dma_heap *heap,
 	return dmabuf;
 
 free_pages:
-	for_each_sg(table->sgl, sg, i, table->nents) {
+	for_each_sg(table->sgl, sg, table->nents, i) {
 		struct page *p = sg_page(sg);
 
 		__free_pages(p, compound_order(p));
