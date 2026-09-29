@@ -11,7 +11,7 @@
 #include <linux/device.h>
 #include <linux/dma-buf.h>
 #include <linux/err.h>
-#include <linux/xarray.h>
+#include <linux/idr.h>
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/nospec.h>
@@ -24,33 +24,12 @@
 
 #define NUM_HEAP_MINORS 128
 
-/**
- * struct dma_heap - represents a dmabuf heap in the system
- * @name:		used for debugging/device-node name
- * @ops:		ops struct for this heap
- * @heap_devt		heap device node
- * @list		list head connecting to list of heaps
- * @heap_cdev		heap char device
- * @heap_dev		heap device struct
- *
- * Represents a heap of memory from which buffers can be made.
- */
-struct dma_heap {
-	const char *name;
-	const struct dma_heap_ops *ops;
-	void *priv;
-	dev_t heap_devt;
-	struct list_head list;
-	struct cdev heap_cdev;
-	struct kref refcount;
-	struct device *heap_dev;
-};
 
 static LIST_HEAD(heap_list);
 static DEFINE_MUTEX(heap_list_lock);
 static dev_t dma_heap_devt;
 static struct class *dma_heap_class;
-static DEFINE_XARRAY_ALLOC(dma_heap_minors);
+static DEFINE_IDR(dma_heap_minors);
 
 struct dma_heap *dma_heap_find(const char *name)
 {
@@ -123,7 +102,7 @@ static int dma_heap_open(struct inode *inode, struct file *file)
 {
 	struct dma_heap *heap;
 
-	heap = xa_load(&dma_heap_minors, iminor(inode));
+	heap = idr_find(&dma_heap_minors, iminor(inode));
 	if (!heap) {
 		pr_err("dma_heap: minor %d unknown.\n", iminor(inode));
 		return -ENODEV;
@@ -252,7 +231,7 @@ static void dma_heap_release(struct kref *ref)
 
 	device_destroy(dma_heap_class, heap->heap_devt);
 	cdev_del(&heap->heap_cdev);
-	xa_erase(&dma_heap_minors, minor);
+	idr_remove(&dma_heap_minors, minor);
 
 	kfree(heap);
 }
@@ -269,31 +248,6 @@ void dma_heap_put(struct dma_heap *h)
 }
 EXPORT_SYMBOL_GPL(dma_heap_put);
 
-/**
- * dma_heap_get_dev() - get device struct for the heap
- * @heap: DMA-Heap to retrieve device struct from
- *
- * Returns:
- * The device struct for the heap.
- */
-struct device *dma_heap_get_dev(struct dma_heap *heap)
-{
-	return heap->heap_dev;
-}
-EXPORT_SYMBOL_GPL(dma_heap_get_dev);
-
-/**
- * dma_heap_get_name() - get heap name
- * @heap: DMA-Heap to retrieve private data for
- *
- * Returns:
- * The char* for the heap name.
- */
-const char *dma_heap_get_name(struct dma_heap *heap)
-{
-	return heap->name;
-}
-EXPORT_SYMBOL_GPL(dma_heap_get_name);
 
 struct dma_heap *dma_heap_add(const struct dma_heap_export_info *exp_info)
 {
@@ -330,9 +284,11 @@ struct dma_heap *dma_heap_add(const struct dma_heap_export_info *exp_info)
 	heap->priv = exp_info->priv;
 
 	/* Find unused minor number */
-	ret = xa_alloc(&dma_heap_minors, &minor, heap,
-		       XA_LIMIT(0, NUM_HEAP_MINORS - 1), GFP_KERNEL);
-	if (ret < 0) {
+	ret = idr_alloc(&dma_heap_minors, heap, 0, NUM_HEAP_MINORS,
+			GFP_KERNEL);
+	if (ret >= 0) {
+		minor = ret;
+	} else {
 		pr_err("dma_heap: Unable to get minor number for heap\n");
 		err_ret = ERR_PTR(ret);
 		goto err0;
@@ -373,7 +329,7 @@ struct dma_heap *dma_heap_add(const struct dma_heap_export_info *exp_info)
 err2:
 	cdev_del(&heap->heap_cdev);
 err1:
-	xa_erase(&dma_heap_minors, minor);
+	idr_remove(&dma_heap_minors, minor);
 err0:
 	kfree(heap);
 	return err_ret;

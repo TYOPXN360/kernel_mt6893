@@ -83,7 +83,7 @@ static struct sg_table *dup_sg_table(struct sg_table *table)
 	}
 
 	new_sg = new_table->sgl;
-	for_each_sgtable_sg(table, sg, i) {
+	for_each_sg(table->sgl, sg, i, table->nents) {
 		sg_set_page(new_sg, sg_page(sg), sg->length, sg->offset);
 		new_sg = sg_next(new_sg);
 	}
@@ -92,6 +92,7 @@ static struct sg_table *dup_sg_table(struct sg_table *table)
 }
 
 static int system_heap_attach(struct dma_buf *dmabuf,
+			      struct device *dev,
 			      struct dma_buf_attachment *attachment)
 {
 	struct system_heap_buffer *buffer = dmabuf->priv;
@@ -148,9 +149,13 @@ static struct sg_table *system_heap_map_dma_buf(struct dma_buf_attachment *attac
 	if (a->uncached)
 		attr = DMA_ATTR_SKIP_CPU_SYNC;
 
-	ret = dma_map_sgtable(attachment->dev, table, direction, attr);
-	if (ret)
+	ret = dma_map_sg_attrs(attachment->dev, table->sgl,
+				table->orig_nents, direction, attr);
+	if (ret == 0)
+		ret = -EIO;
+	if (ret < 0)
 		return ERR_PTR(ret);
+	table->nents = ret;
 
 	a->mapped = true;
 	return table;
@@ -166,7 +171,8 @@ static void system_heap_unmap_dma_buf(struct dma_buf_attachment *attachment,
 	if (a->uncached)
 		attr = DMA_ATTR_SKIP_CPU_SYNC;
 	a->mapped = false;
-	dma_unmap_sgtable(attachment->dev, table, direction, attr);
+	dma_unmap_sg_attrs(attachment->dev, table->sgl, table->nents,
+			  direction, attr);
 }
 
 static int system_heap_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
@@ -184,7 +190,8 @@ static int system_heap_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 		list_for_each_entry(a, &buffer->attachments, list) {
 			if (!a->mapped)
 				continue;
-			dma_sync_sgtable_for_cpu(a->dev, a->table, direction);
+			dma_sync_sg_for_cpu(a->dev, a->table->sgl, a->table->nents,
+			      direction);
 		}
 	}
 	mutex_unlock(&buffer->lock);
@@ -207,7 +214,8 @@ static int system_heap_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 		list_for_each_entry(a, &buffer->attachments, list) {
 			if (!a->mapped)
 				continue;
-			dma_sync_sgtable_for_device(a->dev, a->table, direction);
+			dma_sync_sg_for_device(a->dev, a->table->sgl, a->table->nents,
+				 direction);
 		}
 	}
 	mutex_unlock(&buffer->lock);
@@ -226,7 +234,7 @@ static int system_heap_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	if (buffer->uncached)
 		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 
-	for_each_sgtable_page(table, &piter, vma->vm_pgoff) {
+	for_each_sg_page(table->sgl, &piter, table->nents, vma->vm_pgoff) {
 		struct page *page = sg_page_iter_page(&piter);
 
 		ret = remap_pfn_range(vma, addr, page_to_pfn(page), PAGE_SIZE,
@@ -256,7 +264,7 @@ static void *system_heap_do_vmap(struct system_heap_buffer *buffer)
 	if (buffer->uncached)
 		pgprot = pgprot_writecombine(PAGE_KERNEL);
 
-	for_each_sgtable_page(table, &piter, 0) {
+	for_each_sg_page(table->sgl, &piter, table->nents, 0) {
 		WARN_ON(tmp - pages >= npages);
 		*tmp++ = sg_page_iter_page(&piter);
 	}
@@ -314,7 +322,7 @@ static int system_heap_zero_buffer(struct system_heap_buffer *buffer)
 	void *vaddr;
 	int ret = 0;
 
-	for_each_sgtable_page(sgt, &piter, 0) {
+	for_each_sg_page(sgt->sgl, &piter, sgt->nents, 0) {
 		p = sg_page_iter_page(&piter);
 		vaddr = kmap_atomic(p);
 		memset(vaddr, 0, PAGE_SIZE);
@@ -339,7 +347,7 @@ static void system_heap_buf_free(struct deferred_freelist_item *item,
 			reason = DF_UNDER_PRESSURE; // On failure, just free
 
 	table = &buffer->sg_table;
-	for_each_sgtable_sg(table, sg, i) {
+	for_each_sg(table->sgl, sg, i, table->nents) {
 		struct page *page = sg_page(sg);
 
 		if (reason == DF_UNDER_PRESSURE) {
@@ -438,7 +446,7 @@ static struct dma_buf *system_heap_do_allocate(struct dma_heap *heap,
 			goto free_buffer;
 
 		list_add_tail(&page->lru, &pages);
-		size_remaining -= page_size(page);
+		size_remaining -= PAGE_SIZE << compound_order(page);
 		max_order = compound_order(page);
 		i++;
 	}
@@ -449,7 +457,7 @@ static struct dma_buf *system_heap_do_allocate(struct dma_heap *heap,
 
 	sg = table->sgl;
 	list_for_each_entry_safe(page, tmp_page, &pages, lru) {
-		sg_set_page(sg, page, page_size(page), 0);
+		sg_set_page(sg, page, PAGE_SIZE << compound_order(page), 0);
 		sg = sg_next(sg);
 		list_del(&page->lru);
 	}
@@ -473,14 +481,16 @@ static struct dma_buf *system_heap_do_allocate(struct dma_heap *heap,
 	 * unmap it now so we don't get corruption later on.
 	 */
 	if (buffer->uncached) {
-		dma_map_sgtable(dma_heap_get_dev(heap), table, DMA_BIDIRECTIONAL, 0);
-		dma_unmap_sgtable(dma_heap_get_dev(heap), table, DMA_BIDIRECTIONAL, 0);
+		dma_map_sg_attrs(dma_heap_get_dev(heap), table->sgl,
+				  table->nents, DMA_BIDIRECTIONAL, 0);
+		dma_unmap_sg_attrs(dma_heap_get_dev(heap), table->sgl,
+				   table->nents, DMA_BIDIRECTIONAL, 0);
 	}
 
 	return dmabuf;
 
 free_pages:
-	for_each_sgtable_sg(table, sg, i) {
+	for_each_sg(table->sgl, sg, i, table->nents) {
 		struct page *p = sg_page(sg);
 
 		__free_pages(p, compound_order(p));
