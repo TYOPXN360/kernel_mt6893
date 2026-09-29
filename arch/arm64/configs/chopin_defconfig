@@ -533,3 +533,6 @@ CONFIG_CFI_CLANG=y
 CONFIG_NETWORK_FILESYSTEMS=y
 # CONFIG_NFS_FS is not set
 # CONFIG_NFSD is not set
+# Android 17 gralloc allocates through dmabuf-heaps (/dev/dma_heap/system)
+CONFIG_DMABUF_HEAPS=y
+CONFIG_DMABUF_HEAPS_SYSTEM=y
