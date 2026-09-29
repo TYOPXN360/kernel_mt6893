@@ -1177,34 +1177,43 @@ static int kbase_mem_umm_map_attachment(struct kbase_context *kctx,
 #if IS_ENABLED(CONFIG_MTK_IOMMU_V2)
 	struct ion_mm_data mm_data;
 	int retry_cnt = 0;
+	/*
+	 * Only buffers exported by ION have an ion handle to configure.
+	 * dmabuf-heap buffers are imported without one (see
+	 * kbase_mem_from_umm()), and for M4U_PORT_GPU this configuration is a
+	 * no-op anyway, so skip it entirely for them.
+	 */
+	bool ion_config = alloc->imported.umm.ion_handle != NULL;
 #endif
 
 	WARN_ON_ONCE(alloc->type != KBASE_MEM_TYPE_IMPORTED_UMM);
 	WARN_ON_ONCE(alloc->imported.umm.sgt);
 
 #if IS_ENABLED(CONFIG_MTK_IOMMU_V2)
-	mutex_lock(&ion_config_lock);
+	if (ion_config) {
+		mutex_lock(&ion_config_lock);
 
-	mm_data.mm_cmd = ION_MM_CONFIG_BUFFER;
-	mm_data.config_buffer_param.kernel_handle =
-			alloc->imported.umm.ion_handle;
-	mm_data.config_buffer_param.module_id = M4U_PORT_GPU;
-	mm_data.config_buffer_param.security = 0;
-	mm_data.config_buffer_param.coherent = 0;
+		mm_data.mm_cmd = ION_MM_CONFIG_BUFFER;
+		mm_data.config_buffer_param.kernel_handle =
+				alloc->imported.umm.ion_handle;
+		mm_data.config_buffer_param.module_id = M4U_PORT_GPU;
+		mm_data.config_buffer_param.security = 0;
+		mm_data.config_buffer_param.coherent = 0;
 
 retry:
-	err = ion_kernel_ioctl(kctx->kbdev->client,
-			ION_CMD_MULTIMEDIA, (unsigned long)&mm_data);
+		err = ion_kernel_ioctl(kctx->kbdev->client,
+				ION_CMD_MULTIMEDIA, (unsigned long)&mm_data);
 
-	if (err == -ION_ERROR_CONFIG_CONFLICT && retry_cnt < 1000) {
-		retry_cnt++;
-		goto retry;
-	} else if (err) {
-		dev_warn(kctx->kbdev->dev,
-				"fail to config ion buffer, err=%d, retry_cnt %d\n",
-				err, retry_cnt);
-		mutex_unlock(&ion_config_lock);
-		return -EINVAL;
+		if (err == -ION_ERROR_CONFIG_CONFLICT && retry_cnt < 1000) {
+			retry_cnt++;
+			goto retry;
+		} else if (err) {
+			dev_warn(kctx->kbdev->dev,
+					"fail to config ion buffer, err=%d, retry_cnt %d\n",
+					err, retry_cnt);
+			mutex_unlock(&ion_config_lock);
+			return -EINVAL;
+		}
 	}
 #endif
 
@@ -1212,7 +1221,8 @@ retry:
 			DMA_BIDIRECTIONAL);
 
 #if IS_ENABLED(CONFIG_MTK_IOMMU_V2)
-	mutex_unlock(&ion_config_lock);
+	if (ion_config)
+		mutex_unlock(&ion_config_lock);
 #endif
 
 	if (IS_ERR_OR_NULL(sgt))
@@ -1558,12 +1568,42 @@ static struct kbase_va_region *kbase_mem_from_umm(struct kbase_context *kctx,
 	ion_handle = ion_import_dma_buf(kctx->kbdev->client, dma_buf);
 
 	if (IS_ERR(ion_handle)) {
-		dev_warn(kctx->kbdev->dev, "import ion handle failed!\n");
-		return NULL;
+		/*
+		 * ion_import_dma_buf() only accepts dma-bufs exported by ION
+		 * itself and returns -EINVAL for every other exporter.
+		 *
+		 * Buffers allocated by the dmabuf-heap framework
+		 * (/dev/dma_heap, e.g. the "system" heap that gralloc falls
+		 * back to when mtk_mm is absent) are exported by dma-heap.c,
+		 * not by ION, so they can never be turned into an ion handle.
+		 * Failing the import here makes eglCreateImageKHR() return
+		 * EGL_BAD_ALLOC, which aborts RenderEngine while it imports a
+		 * gralloc buffer.
+		 *
+		 * Such a buffer needs no ION configuration anyway: for
+		 * M4U_PORT_GPU ion_get_domain_id() returns
+		 * MTK_GET_DOMAIN_IGNORE, and with ION_NOT_SUPPORT_RETRY
+		 * mtk_ion_copy_param() returns without touching the buffer,
+		 * so ION_MM_CONFIG_BUFFER is a no-op for GPU buffers. The GPU
+		 * maps them through sg_phys() in kbase_mem_umm_map_attachment().
+		 *
+		 * Import without an ion handle instead of failing.
+		 */
+		if (PTR_ERR(ion_handle) != -EINVAL) {
+			dev_warn(kctx->kbdev->dev, "import ion handle failed!\n");
+			return NULL;
+		}
+
+		dev_info_ratelimited(kctx->kbdev->dev,
+				     "dma-buf %pK is not an ion buffer, importing it without ion config\n",
+				     dma_buf);
+		ion_handle = NULL;
 	}
 
-	reg->gpu_alloc->imported.umm.ion_client = kctx->kbdev->client;
-	reg->gpu_alloc->imported.umm.ion_handle = ion_handle;
+	if (ion_handle) {
+		reg->gpu_alloc->imported.umm.ion_client = kctx->kbdev->client;
+		reg->gpu_alloc->imported.umm.ion_handle = ion_handle;
+	}
 #endif
 
 	if (!IS_ENABLED(CONFIG_MALI_DMA_BUF_MAP_ON_DEMAND)) {
@@ -1574,8 +1614,11 @@ static struct kbase_va_region *kbase_mem_from_umm(struct kbase_context *kctx,
 		err = kbase_mem_umm_map_attachment(kctx, reg);
 		if (err) {
 #if IS_ENABLED(CONFIG_MTK_IOMMU_V2)
-			ion_free(kctx->kbdev->client, ion_handle);
-			ion_handle = NULL;
+			/* ion_handle is NULL for non-ion (dmabuf-heap) buffers */
+			if (ion_handle) {
+				ion_free(kctx->kbdev->client, ion_handle);
+				ion_handle = NULL;
+			}
 #endif
 			dev_warn(kctx->kbdev->dev,
 				 "Failed to map dma-buf %pK on GPU: %d\n",

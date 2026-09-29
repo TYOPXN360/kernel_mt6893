@@ -287,11 +287,13 @@ void mtk_drm_gem_free_object(struct drm_gem_object *obj)
 			       __func__, __LINE__);
 
 #if defined(CONFIG_MTK_IOMMU_V2)
-	/* No ion handle in dumb buffer */
+	/* No ion handle in dumb buffer, and none in buffers imported from a
+	 * non-ion exporter (dmabuf-heap) either
+	 */
 	if (mtk_gem->handle && priv->client)
 		mtk_drm_gem_ion_free_handle(priv->client, mtk_gem->handle,
 				__func__, __LINE__);
-	else if (!mtk_gem->is_dumb)
+	else if (!mtk_gem->is_dumb && !mtk_gem->sg)
 		DDPPR_ERR("invaild ion handle or client\n");
 #endif
 
@@ -420,8 +422,21 @@ struct ion_handle *mtk_gem_ion_import_dma_buf(struct ion_client *client,
 	DRM_MMP_EVENT_START(ion_import_dma, (unsigned long)client, line);
 	handle = ion_import_dma_buf(client, dmabuf);
 
+	/* ion_import_dma_buf() returns ERR_PTR() for dma-bufs that were not
+	 * exported by ION (e.g. the dmabuf-heap framework gralloc uses), so
+	 * handle must be validated before it is dereferenced here.
+	 */
+	if (IS_ERR(handle)) {
+		DRM_MMP_EVENT_END(ion_import_dma, (unsigned long)handle,
+				  (unsigned long)dmabuf);
+		DDPDBG("%s:%d handle:0x%p (error) -\n",
+			   __func__, __LINE__,
+			   handle);
+		return handle;
+	}
+
 	DRM_MMP_EVENT_END(ion_import_dma, (unsigned long)handle->buffer,
-			(unsigned long)dmabuf);
+			  (unsigned long)dmabuf);
 	DDPDBG("%s:%d handle:0x%p -\n",
 		   __func__, __LINE__,
 		   handle);
@@ -575,9 +590,19 @@ mtk_gem_prime_import(struct drm_device *dev, struct dma_buf *dma_buf)
 	handle = mtk_gem_ion_import_dma_buf(client, dma_buf,
 			__func__, __LINE__);
 	if (IS_ERR(handle)) {
-		DDPPR_ERR("ion import failed, client:0x%p, dmabuf:0x%p\n",
+		/*
+		 * ion_import_dma_buf() only accepts dma-bufs exported by ION
+		 * itself and returns -EINVAL for every other exporter, such as
+		 * the dmabuf-heap framework that gralloc falls back to when the
+		 * mtk_mm heap is absent. Those buffers are still perfectly
+		 * importable by DRM: the ion handle is only stored on the gem
+		 * object and freed again (it is never used to program the
+		 * display), so import without a handle instead of rejecting
+		 * every gralloc buffer.
+		 */
+		DDPPR_ERR("ion import failed (no ion handle), client:0x%p, dmabuf:0x%p\n",
 				client, dma_buf);
-		return ERR_PTR(-EINVAL);
+		handle = NULL;
 	}
 
 #endif
