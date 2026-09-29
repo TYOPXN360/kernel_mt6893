@@ -20,6 +20,7 @@
 #include <linux/scatterlist.h>
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/vmalloc.h>
 
 #include "page_pool.h"
@@ -49,6 +50,16 @@ struct dma_heap_attachment {
 
 	bool uncached;
 };
+
+static bool system_heap_needs_dma_map(struct device *dev)
+{
+#if IS_ENABLED(CONFIG_MTK_IOMMU_V2)
+	/* MTK Mali builds GPU page tables from sg_phys() via their own M4U. */
+	if (dev->driver && !strcmp(dev->driver->name, "mali"))
+		return false;
+#endif
+	return true;
+}
 
 #define LOW_ORDER_GFP (GFP_HIGHUSER | __GFP_ZERO | __GFP_COMP)
 #define MID_ORDER_GFP (LOW_ORDER_GFP | __GFP_NOWARN)
@@ -146,6 +157,18 @@ static struct sg_table *system_heap_map_dma_buf(struct dma_buf_attachment *attac
 	int attr = 0;
 	int ret;
 
+	if (!system_heap_needs_dma_map(attachment->dev)) {
+		struct scatterlist *sg;
+		int i;
+
+		for_each_sg(table->sgl, sg, table->orig_nents, i) {
+			sg_dma_address(sg) = sg_phys(sg);
+			sg_dma_len(sg) = sg->length;
+		}
+		table->nents = table->orig_nents;
+		return table;
+	}
+
 	if (a->uncached)
 		attr = DMA_ATTR_SKIP_CPU_SYNC;
 
@@ -167,6 +190,9 @@ static void system_heap_unmap_dma_buf(struct dma_buf_attachment *attachment,
 {
 	struct dma_heap_attachment *a = attachment->priv;
 	int attr = 0;
+
+	if (!a->mapped)
+		return;
 
 	if (a->uncached)
 		attr = DMA_ATTR_SKIP_CPU_SYNC;

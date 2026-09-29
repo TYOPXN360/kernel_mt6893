@@ -1225,8 +1225,12 @@ retry:
 		mutex_unlock(&ion_config_lock);
 #endif
 
-	if (IS_ERR_OR_NULL(sgt))
-		return -EINVAL;
+	if (IS_ERR_OR_NULL(sgt)) {
+		err = sgt ? PTR_ERR(sgt) : -EINVAL;
+		dev_warn_ratelimited(kctx->kbdev->dev,
+				     "dma-buf attachment map failed: %d\n", err);
+		return err;
+	}
 
 	/* save for later */
 	alloc->imported.umm.sgt = sgt;
