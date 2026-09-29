@@ -533,6 +533,10 @@ CONFIG_CFI_CLANG=y
 CONFIG_NETWORK_FILESYSTEMS=y
 # CONFIG_NFS_FS is not set
 # CONFIG_NFSD is not set
-# Android 17 gralloc allocates through dmabuf-heaps (/dev/dma_heap/system)
+# Android 17 gralloc runs the dma-heap framework and asks the kernel for the
+# MediaTek "mtk_mm" heaps. CONFIG_DMABUF_HEAPS_MTK_MM serves them from ION so
+# the MediaTek composer, which can only import ION buffers, accepts them.
+# CONFIG_DMABUF_HEAPS_SYSTEM stays enabled as a fallback.
 CONFIG_DMABUF_HEAPS=y
 CONFIG_DMABUF_HEAPS_SYSTEM=y
+CONFIG_DMABUF_HEAPS_MTK_MM=y

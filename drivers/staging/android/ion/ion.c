@@ -1901,6 +1901,75 @@ struct dma_buf *ion_share_dma_buf(struct ion_client *client,
 
 EXPORT_SYMBOL(ion_share_dma_buf);
 
+/**
+ * ion_alloc_export - allocate an ION buffer and export it as a dma-buf
+ * @len:		requested size in bytes, rounded up to a page
+ * @flags:		ION allocation flags
+ * @heap_id_mask:	bitmask of ION_HEAP_* types to pick the buffer from
+ *
+ * Allocates straight from the registered ION heaps, bypassing the client and
+ * handle bookkeeping, and exports the result with ION's own dma_buf_ops.
+ *
+ * This exists for the mtk_mm dma-heap: the userspace gralloc in this vendor
+ * asks the dma-heap framework for "mtk_mm", but the MediaTek composer can
+ * only take buffers whose dma_buf_ops belong to ION (it calls
+ * ion_import_dma_buf(), which rejects any other exporter). Allocating the
+ * backing store through ION and exporting it here keeps both sides happy.
+ *
+ * Return: the exported dma-buf, or an error pointer.
+ */
+struct dma_buf *ion_alloc_export(size_t len, unsigned long flags,
+				 unsigned int heap_id_mask)
+{
+	struct ion_device *dev = g_ion_device;
+	struct ion_buffer *buffer = NULL;
+	struct ion_heap *heap;
+	struct dma_buf *dmabuf;
+	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
+	size_t aligned_len;
+
+	if (!dev)
+		return ERR_PTR(-ENODEV);
+
+	aligned_len = PAGE_ALIGN(len);
+	if (!aligned_len)
+		return ERR_PTR(-EINVAL);
+
+	down_read(&dev->lock);
+	plist_for_each_entry(heap, &dev->heaps, node) {
+		if (!((1 << heap->id) & heap_id_mask))
+			continue;
+		buffer = ion_buffer_create(heap, dev, aligned_len, 0, flags);
+		if (!IS_ERR_OR_NULL(buffer))
+			break;
+	}
+	up_read(&dev->lock);
+
+	if (!buffer || IS_ERR(buffer))
+		return ERR_PTR(IS_ERR(buffer) ? PTR_ERR(buffer) : -ENODEV);
+
+	/* The creation reference is handed over to the dma-buf. */
+	exp_info.ops = &dma_buf_ops;
+	exp_info.size = buffer->size;
+	exp_info.flags = O_RDWR;
+	exp_info.priv = buffer;
+
+	dmabuf = dma_buf_export(&exp_info);
+	if (IS_ERR(dmabuf)) {
+		IONMSG("%s dma buf export failed 0x%lx.\n", __func__,
+		       (unsigned long)dmabuf);
+		ion_buffer_put(buffer);
+		return dmabuf;
+	}
+
+	mutex_lock(&dmabuf_list.lock);
+	list_add(&dmabuf->node, &dmabuf_list.head);
+	mutex_unlock(&dmabuf_list.lock);
+
+	return dmabuf;
+}
+EXPORT_SYMBOL_GPL(ion_alloc_export);
+
 static int __ion_share_dma_buf_fd(struct ion_client *client,
 				  struct ion_handle *handle, bool lock_client)
 {

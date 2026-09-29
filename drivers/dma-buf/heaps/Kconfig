@@ -20,3 +20,13 @@ config DMABUF_HEAPS_CMA
 	  Choose this option to enable dma-buf CMA heap. This heap is backed
 	  by the Contiguous Memory Allocator (CMA). If your system has these
 	  regions, you should say Y here.
+
+config DMABUF_HEAPS_MTK_MM
+	bool "DMA-BUF MediaTek mtk_mm Heap"
+	depends on DMABUF_HEAPS && ION
+	help
+	  Register the "mtk_mm" and "mtk_mm-uncached" heaps that the
+	  MediaTek userspace gralloc asks for.  The buffers are allocated
+	  through ION and exported with ION's dma_buf_ops so that the
+	  MediaTek composer, which can only import ION buffers, accepts
+	  them instead of leaking a file descriptor per rejected layer.
