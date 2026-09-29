@@ -533,6 +533,17 @@ CONFIG_CFI_CLANG=y
 CONFIG_NETWORK_FILESYSTEMS=y
 # CONFIG_NFS_FS is not set
 # CONFIG_NFSD is not set
-# Android 17 gralloc allocates through dmabuf-heaps (/dev/dma_heap/system)
+# Android 17 gralloc runs libdmabufheap in legacy (ION) mode, and it prefers a
+# matching dma-heap over ION whenever one is registered: BufferAllocator's
+# Alloc() only falls back to IonAlloc() when OpenDmabufHeap() fails, and
+# AllocSystem() actively probes for the "system-uncached" heap. Registering
+# the generic system heap therefore steals buffer allocations away from ION.
+# Buffers from this heap are not ION-exported, so the MediaTek composer
+# (android.hardware.graphics.composer@2.3-service) fails to
+# ion_import_dma_buf() them, leaks a file descriptor per layer per frame, and
+# the display degrades into flicker, banding and eventually a black screen
+# once the process runs out of descriptors. Keep the framework, but leave the
+# heaps unregistered so every allocation goes through ION as it did on
+# Android 16.
 CONFIG_DMABUF_HEAPS=y
-CONFIG_DMABUF_HEAPS_SYSTEM=y
+# CONFIG_DMABUF_HEAPS_SYSTEM is not set
