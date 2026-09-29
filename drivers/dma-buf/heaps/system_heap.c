@@ -175,6 +175,81 @@ static void system_heap_unmap_dma_buf(struct dma_buf_attachment *attachment,
 			  direction, attr);
 }
 
+/*
+ * 4.14 dma-buf core still carries the legacy kmap-style callbacks:
+ *
+ *   void *(*map)(struct dma_buf *, unsigned long page_num);
+ *   void *(*map_atomic)(struct dma_buf *, unsigned long page_num);
+ *
+ * and dma_buf_export() refuses (WARN_ON + -EINVAL) to export a buffer unless
+ * both ->map and ->map_atomic are provided.  The page_num argument is the
+ * page index within the buffer (PAGE_SIZE units); there is no
+ * dma_data_direction here - direction is only passed to ->map_dma_buf by
+ * dma_buf_map_attachment(), which is already implemented above.
+ *
+ * Locate the backing page in the buffer's sg_table and kmap it.  ->map may
+ * sleep so it uses kmap()/kunmap(); ->map_atomic must not sleep, so it uses
+ * kmap_atomic()/kunmap_atomic() (preempt/pagefault disabled, paired in
+ * ->unmap_atomic).
+ */
+static struct page *system_heap_get_page(struct system_heap_buffer *buffer,
+					 unsigned long page_num)
+{
+	struct sg_table *table = &buffer->sg_table;
+	struct sg_page_iter piter;
+	struct page *page = NULL;
+
+	if (page_num >= (PAGE_ALIGN(buffer->len) >> PAGE_SHIFT))
+		return NULL;
+
+	/* start iterating directly at the requested page offset */
+	for_each_sg_page(table->sgl, &piter, table->nents, page_num) {
+		page = sg_page_iter_page(&piter);
+		break;
+	}
+
+	return page;
+}
+
+static void *system_heap_map(struct dma_buf *dmabuf, unsigned long page_num)
+{
+	struct system_heap_buffer *buffer = dmabuf->priv;
+	struct page *page;
+
+	page = system_heap_get_page(buffer, page_num);
+	if (!page)
+		return NULL;
+
+	return kmap(page);
+}
+
+static void system_heap_unmap(struct dma_buf *dmabuf, unsigned long page_num,
+			      void *vaddr)
+{
+	if (vaddr)
+		kunmap(kmap_to_page(vaddr));
+}
+
+static void *system_heap_map_atomic(struct dma_buf *dmabuf,
+				    unsigned long page_num)
+{
+	struct system_heap_buffer *buffer = dmabuf->priv;
+	struct page *page;
+
+	page = system_heap_get_page(buffer, page_num);
+	if (!page)
+		return NULL;
+
+	return kmap_atomic(page);
+}
+
+static void system_heap_unmap_atomic(struct dma_buf *dmabuf,
+				     unsigned long page_num, void *vaddr)
+{
+	if (vaddr)
+		kunmap_atomic(vaddr);
+}
+
 static int system_heap_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 						enum dma_data_direction direction)
 {
@@ -379,6 +454,10 @@ static const struct dma_buf_ops system_heap_buf_ops = {
 	.unmap_dma_buf = system_heap_unmap_dma_buf,
 	.begin_cpu_access = system_heap_dma_buf_begin_cpu_access,
 	.end_cpu_access = system_heap_dma_buf_end_cpu_access,
+	.map = system_heap_map,
+	.unmap = system_heap_unmap,
+	.map_atomic = system_heap_map_atomic,
+	.unmap_atomic = system_heap_unmap_atomic,
 	.mmap = system_heap_mmap,
 	.vmap = system_heap_vmap,
 	.vunmap = system_heap_vunmap,
