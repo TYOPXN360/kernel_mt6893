@@ -550,6 +550,7 @@ CONFIG_DMABUF_HEAPS_MTK_MM=y
 # ReSukiSU (KernelSU). Integrated by the upstream setup script, which injects
 # drivers/kernelsu and the CONFIG_KSU menu entry.
 CONFIG_KSU=y
+CONFIG_KSU_MANUAL_HOOK=y
 
 # cgroup v2. kernel/cgroup/pids.c already provides .dfl_cftypes, so the PIDs
 # controller is v2 capable and only needs enabling. MTK's tree dropped the
