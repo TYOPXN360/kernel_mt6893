@@ -2198,7 +2198,16 @@ struct cgroup_subsys cpuset_cgrp_subsys = {
 	.fork		= cpuset_fork,
 	.legacy_cftypes	= files,
 	.dfl_cftypes	= cpuset_dfl_cftypes,
-	.early_init	= true,
+	/*
+	 * Not early_init: cgroup_init_subsys(ss, true) only does css_alloc
+	 * and never calls cgroup_add_dfl_cftypes(), and the v2 root is already
+	 * built by cgroup_setup_root() before cgroup_init()'s loop runs, so
+	 * registering cpuset's cftypes from this path came too late for it to
+	 * show up in cgroup.controllers. Hence "echo +cpuset >
+	 * cgroup.subtree_control" was rejected even though the kernel does
+	 * contain cpuset.cpus/cpuset.mems.
+	 */
+	.early_init	= false,
 };
 
 /**
