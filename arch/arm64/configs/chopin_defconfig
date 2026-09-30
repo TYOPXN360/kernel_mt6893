@@ -546,3 +546,7 @@ CONFIG_NETWORK_FILESYSTEMS=y
 CONFIG_DMABUF_HEAPS=y
 CONFIG_DMABUF_HEAPS_SYSTEM=y
 CONFIG_DMABUF_HEAPS_MTK_MM=y
+
+# ReSukiSU (KernelSU). Integrated by the upstream setup script, which injects
+# drivers/kernelsu and the CONFIG_KSU menu entry.
+CONFIG_KSU=y
