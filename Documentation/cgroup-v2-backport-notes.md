@@ -117,3 +117,41 @@ throttled 字段、完整的 hrtimer 节流引擎（`init_cfs_bandwidth()`、
 
 因此 cpu 控制器需要三步：开 `CONFIG_CFS_BANDWIDTH`、给调度器补带宽设置接口、
 写 cgroup v2 cpu 控制器（css_alloc/can_attach + `cpu.max`/`cpu.weight`/`cpu.stat`）。
+
+## cpu 控制器：已实现但同样挂不上 v2（关键规律）
+
+MTK 的 `kernel/sched/core.c` **本来就有完整的 cpu 控制器**
+（`cpu_cgrp_subsys`，含 `cpu_cgroup_css_alloc/online/released/free/fork/
+can_attach/attach` 和 `cpu_files`），并且已有 `tg_set_cfs_bandwidth()`、
+`tg_set_cfs_quota()`、`tg_set_cfs_period()`。缺的只是 `.dfl_cftypes`。
+
+已完成的移植（`ed8712845821`）：
+- `CONFIG_CFS_BANDWIDTH=y`（`struct cfs_bandwidth` 的字段和 runtime 补充
+  都在这个 `#ifdef` 内，Kconfig 默认 n）
+- core.c 新增 `cpu_dfl_files`（`cpu.max` / `cpu.weight` / `cpu.stat`），
+  复用 v1 处理器并做 us<->ns 换算，挂到 `.dfl_cftypes`
+- 导出 `tg_set_cfs_bandwidth()`（原本是 core.c 里的 static）
+
+**实测结果：仍然不进 v2。** `cgroup.controllers` 依旧只有 `memory pids`。
+
+### 规律（两次独立验证）
+
+| 控制器 | early_init | v2 可用 |
+|---|---|---|
+| memory | 否 | ✅ |
+| pids | 否 | ✅ |
+| cpuset | **是** | ❌ |
+| cpu | **是** | ❌ |
+
+**凡 `early_init = true` 的控制器都无法挂到 v2 统一层级。**
+`cgroup_init_early()` 只做 `cgroup_init_subsys(ss, true)`，而
+`cgroup_setup_root(&cgrp_dfl_root, 0)` 紧随其后建立 v2 根；这些子系统的
+`cgroup_add_dfl_cftypes()` 要等到 `cgroup_init()` 的循环才执行，晚于 v2 根
+建立，因此不进 `cgrp_dfl_root.subsys_mask`。
+
+注意：把 cpuset 改成 `early_init = false` 也无效（已回退 `6df3eb263909`），
+说明还有别的因素，尚未定位。**不要再重复这两种尝试。**
+
+若要真正解决，需要改的是 cgroup 核心的初始化顺序（在
+`cgroup_init_early()` 之前完成 dfl cftype 注册，或在
+`cgroup_setup_root()` 之后重新收集控制器），而非继续给单个控制器打补丁。
