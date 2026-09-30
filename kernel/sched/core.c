@@ -8524,7 +8524,7 @@ const u64 min_cfs_quota_period = 1 * NSEC_PER_MSEC; /* 1ms */
 
 static int __cfs_schedulable(struct task_group *tg, u64 period, u64 runtime);
 
-static int tg_set_cfs_bandwidth(struct task_group *tg, u64 period, u64 quota)
+int tg_set_cfs_bandwidth(struct task_group *tg, u64 period, u64 quota)
 {
 	int i, ret = 0, runtime_enabled, runtime_was_enabled;
 	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
@@ -8852,6 +8852,111 @@ static struct cftype cpu_files[] = {
 	{ }	/* Terminate */
 };
 
+/*
+ * cgroup v2 interface for the cpu controller. Everything below is already
+ * implemented for the v1 hierarchy in cpu_files[]; Android 12+ however looks
+ * for the AIDL "cpu" controller in the unified hierarchy, and cgroup_subsys
+ * only publishes .dfl_cftypes to it, so cpu_cgrp_subsys has to expose the
+ * same handlers under the v2 names. android.hardware.radio and friends aside,
+ * this is what init's cpuset/cpu controller probing looks for.
+ */
+#ifdef CONFIG_CFS_BANDWIDTH
+static int cpu_dfl_max_show(struct seq_file *sf, void *v);
+static ssize_t cpu_dfl_max_write(struct kernfs_open_file *of, char *buf,
+				 size_t nbytes, loff_t off);
+#endif
+
+static struct cftype cpu_dfl_files[] = {
+#ifdef CONFIG_CFS_BANDWIDTH
+	{
+		.name = "cpu.max",
+		.seq_show = cpu_dfl_max_show,
+		.write = cpu_dfl_max_write,
+	},
+#endif
+	{
+		.name = "cpu.weight",
+		.read_u64 = cpu_shares_read_u64,
+		.write_u64 = cpu_shares_write_u64,
+	},
+	{
+		.name = "cpu.stat",
+		.seq_show = cpu_stats_show,
+	},
+	{ }	/* Terminate */
+};
+
+#ifdef CONFIG_CFS_BANDWIDTH
+/*
+ * v2 exposes a single "cpu.max" file holding "<quota> <period>", or
+ * "max <period>", both in nanoseconds. Drive it through the same v1 helpers
+ * so both hierarchies stay backed by one implementation; v1 keeps the values
+ * in microseconds, hence the conversions.
+ */
+static int cpu_dfl_max_show(struct seq_file *sf, void *v)
+{
+	struct cgroup_subsys_state *css = seq_css(sf);
+	s64 quota = cpu_cfs_quota_read_s64(css, NULL);
+	u64 period = cpu_cfs_period_read_u64(css, NULL);
+
+	if (quota < 0)
+		seq_printf(sf, "max %llu\n", div_u64(period, 1000) * 1000);
+	else
+		seq_printf(sf, "%lld %llu\n", quota,
+			   div_u64(period, 1000) * 1000);
+	return 0;
+}
+
+static ssize_t cpu_dfl_max_write(struct kernfs_open_file *of, char *buf,
+				 size_t nbytes, loff_t off)
+{
+	struct cgroup_subsys_state *css = of_css(of);
+	char *tmpbuf, *token;
+	s64 quota;
+	u64 period;
+	ssize_t ret;
+
+	tmpbuf = kmalloc(strlen(buf) + 1, GFP_KERNEL);
+	if (!tmpbuf)
+		return -ENOMEM;
+	strcpy(tmpbuf, buf);
+
+	token = strsep(&tmpbuf, " ");
+	if (!token) {
+		ret = -EINVAL;
+		goto out;
+	}
+	if (!strcmp(token, "max"))
+		quota = -1;
+	else {
+		ret = kstrtos64(token, 0, &quota);
+		if (ret)
+			goto out;
+	}
+
+	token = strsep(&tmpbuf, " ");
+	if (!token) {
+		ret = -EINVAL;
+		goto out;
+	}
+	ret = kstrtou64(token, 0, &period);
+	if (ret)
+		goto out;
+
+	ret = cpu_cfs_quota_write_s64(css, NULL, quota);
+	if (ret)
+		goto out;
+	ret = cpu_cfs_period_write_u64(css, NULL, div_u64(period, 1000));
+	if (ret)
+		goto out;
+
+	ret = strlen(buf);
+out:
+	kfree(tmpbuf);
+	return ret;
+}
+#endif /* CONFIG_CFS_BANDWIDTH */
+
 struct cgroup_subsys cpu_cgrp_subsys = {
 	.css_alloc	= cpu_cgroup_css_alloc,
 	.css_online	= cpu_cgroup_css_online,
@@ -8861,6 +8966,7 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 	.can_attach	= cpu_cgroup_can_attach,
 	.attach		= cpu_cgroup_attach,
 	.legacy_cftypes	= cpu_files,
+	.dfl_cftypes	= cpu_dfl_files,
 	.early_init	= true,
 };
 
