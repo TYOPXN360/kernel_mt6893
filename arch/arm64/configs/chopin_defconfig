@@ -560,3 +560,10 @@ CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK=y
 # cpu and io controller sources entirely and cpuset.c lost its .dfl_cftypes,
 # so those still need to be ported.
 CONFIG_CGROUP_PIDS=y
+
+# cgroup v2 cpu controller. The 4.14 tree already carries MediaTek's backport
+# of the 5.x cfs_rq-level throttling engine (cfs_rq->tg, cfs_bandwidth and the
+# hrtimer period timer in fair.c), but the bandwidth fields of
+# struct cfs_bandwidth and the runtime refill live behind CONFIG_CFS_BANDWIDTH,
+# which the Kconfig defaults to n.
+CONFIG_CFS_BANDWIDTH=y
