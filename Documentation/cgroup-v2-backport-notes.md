@@ -155,3 +155,59 @@ can_attach/attach` 和 `cpu_files`），并且已有 `tg_set_cfs_bandwidth()`、
 若要真正解决，需要改的是 cgroup 核心的初始化顺序（在
 `cgroup_init_early()` 之前完成 dfl cftype 注册，或在
 `cgroup_setup_root()` 之后重新收集控制器），而非继续给单个控制器打补丁。
+
+## 真正根因：不是 early_init，是 v1 挂载抢走控制器
+
+上面那条「early_init 控制器无法进 v2」的规律**是错的**，在此更正。
+
+在内核里加临时 printk 后拿到的事实（已从代码中移除）：
+
+```
+cgroupdbg4: id=0 name=cpuset enabled=1 early=1 dfl=0x... legacy=0x...
+cgroupdbg4: id=1 name=cpu    enabled=1 early=1 dfl=0x... legacy=0x...
+cgroupdbg2: mask=a0 rootss=e4 names: [5]memory [7]pids
+```
+
+即 cpuset(0) 与 cpu(1) **都是 enabled=1 且 dfl_cftypes 非空**，但
+`cgrp_dfl_root.subsys_mask` 里根本没有它们。early_init 与此无关。
+
+真正的原因在 `cgroup_init()` 之后：`mount -t cgroup ... ` 每挂载一个 v1
+层级，`cgroup-v1.c` 就调用 `rebind_subsystems()`，其中
+
+```c
+if (ss->root == &cgrp_dfl_root)
+        dfl_disable_ss_mask |= 1 << ssid;
+...
+cgrp_dfl_root.subsys_mask &= ~dfl_disable_ss_mask;
+```
+
+会把该控制器**从 v2 剥离**。而 `/system/etc/cgroups.json` 恰好把 cpu 与
+cpuset 声明为 v1 路径：
+
+```json
+{ "Controller": "cpu",   "Path": "/dev/cpuctl" },
+{ "Controller": "cpuset", "Path": "/dev/cpuset" }
+```
+
+所以每次启动，init 挂载这两个 v1 层级，就把控制器从 v2 抢走了——
+无论内核侧准备得多好。
+
+**修复**：不改内核，改配置。新增
+`device/xiaomi/mt6893-common/etc/cgroups.json`，把 cpu/cpuset 从 v1 列表
+移除、改为在 v2 的 Controllers 中激活；blkio 仍留在 v1。
+由 `mt6893.mk` 的 `PRODUCT_COPY_FILES` 装到 `/vendor/etc/cgroups.json`。
+
+注意 `/dev/cpuset` 仍会被 init 挂载（MTK 的 `init.mt6893.power.rc` 依赖它写
+`/dev/cpuset/*/cpus`），但内核已强制 `is_in_v2_mode()` 返回 true，那些脚本
+的行为不受影响。真正决定控制器归属的是 cgroups.json 的声明。
+
+## 构建注意（user 变种）
+
+- 一律用 `breakfast chopin user` + `mka -j16 -k0 bacon`。
+- 中断构建会留下损坏缓存，表现为：
+  - `ninja: unable to do incremental build as fs state is corrupted: unexpected EOF`
+  - `ld.lld: version script assignment of 'LIBMEDIANDK' ... symbol not defined`
+  - `error[E0786]: found invalid metadata files for crate ...`
+  清理 `out/soong/.siso_fs_state*` `.siso_deps*`、对应模块的
+  `out/soong/.intermediates/...` 目录后重跑即可。
+- `out/soong/.intermediates` 超过 100GB，磁盘吃紧时优先清理。
