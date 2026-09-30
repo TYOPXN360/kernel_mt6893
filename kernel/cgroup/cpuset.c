@@ -1977,6 +1977,45 @@ static struct cftype files[] = {
 };
 
 /*
+ * cgroup v2 interface. Android 12+ uses the unified hierarchy, and this tree
+ * had its cpuset v2 support stripped: cpuset_cgrp_subsys only carried
+ * .legacy_cftypes, so "cpuset" never appeared in cgroup.controllers and none
+ * of the cpuset.* files existed in the v2 hierarchy. Every handler is still
+ * present, so expose the same ones under the v2 names.
+ */
+static struct cftype cpuset_dfl_cftypes[] = {
+	{
+		.name = "cpuset.cpus",
+		.seq_show = cpuset_common_seq_show,
+		.write = cpuset_write_resmask,
+		.max_write_len = (100U + 6 * NR_CPUS),
+		.private = FILE_CPULIST,
+	},
+
+	{
+		.name = "cpuset.mems",
+		.seq_show = cpuset_common_seq_show,
+		.write = cpuset_write_resmask,
+		.max_write_len = (100U + 6 * MAX_NUMNODES),
+		.private = FILE_MEMLIST,
+	},
+
+	{
+		.name = "cpuset.effective_cpus",
+		.seq_show = cpuset_common_seq_show,
+		.private = FILE_EFFECTIVE_CPULIST,
+	},
+
+	{
+		.name = "cpuset.effective_mems",
+		.seq_show = cpuset_common_seq_show,
+		.private = FILE_EFFECTIVE_MEMLIST,
+	},
+
+	{ }	/* terminate */
+};
+
+/*
  *	cpuset_css_alloc - allocate a cpuset css
  *	cgrp:	control group that the new cpuset will be part of
  */
@@ -2158,6 +2197,7 @@ struct cgroup_subsys cpuset_cgrp_subsys = {
 	.bind		= cpuset_bind,
 	.fork		= cpuset_fork,
 	.legacy_cftypes	= files,
+	.dfl_cftypes	= cpuset_dfl_cftypes,
 	.early_init	= true,
 };
 
