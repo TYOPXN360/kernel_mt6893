@@ -198,6 +198,7 @@
 		pins_cmd_dat {
 			pinmux = <PINMUX_GPIO135__FUNC_GPIO135>;
 			slew-rate = <1>;
+			drive-strength = <MTK_DRIVE_12mA>;
 			bias-disable;
 			output-low;
 			input-schmitt-enable = <0>;
@@ -208,6 +209,11 @@
 		pins_cmd_dat {
 			pinmux = <PINMUX_GPIO135__FUNC_PWM_0>;
 			slew-rate = <1>;
+			/* The IR blaster pin had no drive-strength, so the pad
+			 * fell back to the 4mA default and the emitter was
+			 * far too weak - remotes only worked at close range.
+			 * 12mA is the usual value for a PWM-driven IR LED. */
+			drive-strength = <MTK_DRIVE_12mA>;
 			output-high;
 		};
 	};
