@@ -471,6 +471,12 @@ CONFIG_PSTORE=y
 # CONFIG_PSTORE_ZLIB_COMPRESS is not set
 CONFIG_PSTORE_LZ4_COMPRESS=y
 CONFIG_PSTORE_LZ4_COMPRESS_DEFAULT=y
+# lib/zstd is already present in this tree (lib/zstd/{common,compress,
+# decompress}) but nothing selected it. Android 17 ships zstd everywhere and
+# expects the in-kernel decompressor, so turn the library on.
+CONFIG_ZSTD_COMMON=y
+CONFIG_ZSTD_COMPRESS=y
+CONFIG_ZSTD_DECOMPRESS=y
 CONFIG_PSTORE_CONSOLE=y
 CONFIG_PSTORE_PMSG=y
 CONFIG_PSTORE_RAM=y
