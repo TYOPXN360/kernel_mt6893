@@ -177,8 +177,6 @@ struct st21nfc_device {
 	struct gpio_desc *gpiod_clkreq;
 	/* GPIO for NFCC CLF_MONITOR_PWR (input) */
 	struct gpio_desc *gpiod_pidle;
-	/* GPIO for NFCC VEN pin, drives the RF front end (output) */
-	struct gpio_desc *gpiod_ven;
 	/* irq_gpio polarity to be used */
 	unsigned int polarity_mode;
 };
@@ -1154,25 +1152,6 @@ static int st21nfc_probe(struct i2c_client *client,
 	if (IS_ERR_OR_NULL(st21nfc_dev->gpiod_reset)) {
 		pr_warn("%s : Unable to request reset-gpios\n", __func__);
 		return -ENODEV;
-	}
-
-// The VEN pin switches the RF front end on some MTK designs (see the
-// qcom,nq-ven property in the reference dtsi). Without it the controller
-// answers over I2C and the stack completes discovery, but the antenna never
-// emits a field and no tag is ever detected.
-	r = of_get_named_gpio(np, "nq-ven", 0);
-	if (gpio_is_valid(r)) {
-		st21nfc_dev->gpiod_ven = gpio_to_desc(r);
-		ret = gpio_request(r, "nq-ven");
-		if (ret) {
-			pr_err("%s : request nq-ven failed (%d)\n", __func__,
-				ret);
-			st21nfc_dev->gpiod_ven = NULL;
-		} else {
-			gpio_direction_output(r, 1);
-			pr_info("%s : nq-ven (RF front end) enabled\n",
-				__func__);
-		}
 	}
 
 // QCOM and MTK54 use standard GPIO definition

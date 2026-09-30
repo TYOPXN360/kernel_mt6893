@@ -996,11 +996,6 @@ USB SWITCH GPIO end */
       gpio-rst = <10>;
       gpio-rst-std = <&pio 10 0x0>;
  //     st,clkreq_gpio = <&pio 25 0x0>;
-      // RF front end enable. Unused by any other peripheral on chopin and
-      // present as qcom,nq-ven in the MediaTek reference dtsi. Without it the
-      // controller answers over I2C and discovery starts, but the antenna
-      // never emits a field, so no tag is ever detected.
-      nq-ven = <&pio 8 0x0>;
       interrupt-names = "nfc_irq";
       pinctrl-names = "default", "nfc_active", "nfc_suspend";
       pinctrl-0 = <&nfc_default>;
