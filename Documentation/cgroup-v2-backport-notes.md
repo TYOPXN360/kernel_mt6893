@@ -69,3 +69,51 @@ cancel_attach/attach/post_attach/can_fork/cancel_fork/fork/exit/release/bind`）
 
 参考：v2 cpu 控制器由 5.2 的 "sched: Introduce cgroup bandwidth interface"
 引入，位于 `kernel/sched/core.c`（不是 `kernel/cgroup/cpu.c`）。
+
+## 真机验证结果（2026-09-30）
+
+刷入实测，`/proc/cgroups` 中 hierarchy 0 即 v2 默认层级：
+
+```
+cpuset    3   8   1     ← 仍在 v1
+memory    0 211   1     ← v2 ✅
+freezer   0 211   1     ← v2 ✅
+pids      0 211   1     ← v2 ✅（本移植启用）
+```
+
+`cgroup.controllers` = `memory pids`，非根 cgroup 下 `pids.max` 已生成，pids 控制器可用。
+
+### cpuset 两次尝试均无效
+
+1. 加 `cpuset_dfl_cftypes` + `.dfl_cftypes` —— 代码编入（vmlinux 含
+   `cpuset.cpus`/`cpuset.mems`），但 `cgroup.controllers` 无 cpuset，
+   `echo +cpuset > cgroup.subtree_control` 被拒。
+2. 改 `.early_init = false` 走与 memory/pids 相同的
+   `cgroup_init_subsys(ss, false)` 路径 —— 仍然无效，已回退
+   （`6df3eb263909`）。
+
+`kernel/cgroup/cgroup.c` 中没有对 cpuset 的特殊处理，`cgroup_init()` 循环
+对它与 memory/pids 一视同仁，故差异来源尚未定位。**不要再重复这两种尝试。**
+
+注意 MTK 的定制：`is_in_v2_mode()` 被改成无条件返回 true（结尾是 `|| true`），
+`cpuset_mount()` 把 "cpuset" 文件系统重定向到 "cgroup" 并加 `noprefix`。
+MTK 用自研 shim 让 cpuset 一直按 v2 语义工作，但控制器本身仍挂在 v1 层级。
+继续在 cpuset 上投入前，应先判断它是否真的需要进 v2。
+
+## cpu 控制器移植的缺口
+
+调度器侧基础设施比预期完整：`cfs_rq->tg`(sched.h:493)、`cfs_bandwidth`(337)、
+throttled 字段、完整的 hrtimer 节流引擎（`init_cfs_bandwidth()`、
+`assign_cfs_rq_runtime()` 在调度路径中被调用），且是 5.x 的 cfs_rq 级模型。
+
+但**缺少 v2 cpu 控制器所依赖的带宽设置 API**：树中没有
+`tg_set_cfs_bandwidth()` / `tg_set_cfs_quotapad_size()`（v5.2 随
+"sched: Introduce cgroup bandwidth interface" 引入）。带宽目前只经
+`tg_cfs_bandwidth(tg)` 静态访问，运行时由 `assign_cfs_rq_runtime()` 驱动，
+没有对外的设置入口。
+
+且 `CONFIG_CFS_BANDWIDTH` 当前为 n（Kconfig 中 `default n`），
+`struct cfs_bandwidth` 的字段位于 `#ifdef CONFIG_CFS_BANDWIDTH` 内，不开就无字段。
+
+因此 cpu 控制器需要三步：开 `CONFIG_CFS_BANDWIDTH`、给调度器补带宽设置接口、
+写 cgroup v2 cpu 控制器（css_alloc/can_attach + `cpu.max`/`cpu.weight`/`cpu.stat`）。
