@@ -3375,7 +3375,7 @@ static int binder_fixup_parent(struct binder_transaction *t,
  * Return:	true if the transactions was successfully queued
  *		false if the target process or thread is dead
  */
-static bool binder_proc_transaction(struct binder_transaction *t,
+static int binder_proc_transaction(struct binder_transaction *t,
 				    struct binder_proc *proc,
 				    struct binder_thread *thread)
 {
@@ -3406,10 +3406,19 @@ static bool binder_proc_transaction(struct binder_transaction *t,
 		proc->async_recv |= oneway;
 	}
 
-	if (proc->is_dead || (thread && thread->is_dead)) {
+	/*
+	 * A frozen process cannot service transactions, so a synchronous
+	 * caller must be told BR_FROZEN_REPLY rather than have its
+	 * transaction queued onto a thread that will never run it. Without
+	 * this the caller blocks in binder_ioctl_write_read forever.
+	 */
+	if ((proc->is_frozen && !oneway) || proc->is_dead ||
+			(thread && thread->is_dead)) {
+		bool proc_is_frozen = proc->is_frozen;
+
 		binder_inner_proc_unlock(proc);
 		binder_node_unlock(node);
-		return false;
+		return proc_is_frozen ? BR_FROZEN_REPLY : BR_DEAD_REPLY;
 	}
 
 	if (!thread && !pending_async)
@@ -3437,7 +3446,7 @@ static bool binder_proc_transaction(struct binder_transaction *t,
 	binder_inner_proc_unlock(proc);
 	binder_node_unlock(node);
 
-	return true;
+	return 0;
 }
 
 /**
@@ -4144,7 +4153,7 @@ static void binder_transaction(struct binder_proc *proc,
 		t->from_parent = thread->transaction_stack;
 		thread->transaction_stack = t;
 		binder_inner_proc_unlock(proc);
-		if (!binder_proc_transaction(t, target_proc, target_thread)) {
+		if (binder_proc_transaction(t, target_proc, target_thread)) {
 			binder_inner_proc_lock(proc);
 			binder_pop_transaction_ilocked(thread, t);
 			binder_inner_proc_unlock(proc);
@@ -4154,7 +4163,7 @@ static void binder_transaction(struct binder_proc *proc,
 		BUG_ON(target_node == NULL);
 		BUG_ON(t->buffer->async_transaction != 1);
 		binder_enqueue_thread_work(thread, tcomplete);
-		if (!binder_proc_transaction(t, target_proc, NULL))
+		if (binder_proc_transaction(t, target_proc, NULL))
 			goto err_dead_proc_or_thread;
 	}
 	if (target_thread)
