@@ -3375,7 +3375,7 @@ static int binder_fixup_parent(struct binder_transaction *t,
  * Return:	true if the transactions was successfully queued
  *		false if the target process or thread is dead
  */
-static int binder_proc_transaction(struct binder_transaction *t,
+static bool binder_proc_transaction(struct binder_transaction *t,
 				    struct binder_proc *proc,
 				    struct binder_thread *thread)
 {
@@ -3406,13 +3406,10 @@ static int binder_proc_transaction(struct binder_transaction *t,
 		proc->async_recv |= oneway;
 	}
 
-	if ((proc->is_frozen && !oneway) || proc->is_dead ||
-			(thread && thread->is_dead)) {
-		bool is_frozen = proc->is_frozen;
-
+	if (proc->is_dead || (thread && thread->is_dead)) {
 		binder_inner_proc_unlock(proc);
 		binder_node_unlock(node);
-		return is_frozen ? BR_FROZEN_REPLY : BR_DEAD_REPLY;
+		return false;
 	}
 
 	if (!thread && !pending_async)
@@ -3440,7 +3437,7 @@ static int binder_proc_transaction(struct binder_transaction *t,
 	binder_inner_proc_unlock(proc);
 	binder_node_unlock(node);
 
-	return 0;
+	return true;
 }
 
 /**
@@ -4113,9 +4110,7 @@ static void binder_transaction(struct binder_proc *proc,
 				in_reply_to, 2);
 #endif
 		binder_inner_proc_lock(target_proc);
-		if (target_thread->is_dead || target_proc->is_frozen) {
-			return_error = target_thread->is_dead ?
-				BR_DEAD_REPLY : BR_FROZEN_REPLY;
+		if (target_thread->is_dead) {
 			binder_inner_proc_unlock(target_proc);
 			goto err_dead_proc_or_thread;
 		}
@@ -4149,7 +4144,7 @@ static void binder_transaction(struct binder_proc *proc,
 		t->from_parent = thread->transaction_stack;
 		thread->transaction_stack = t;
 		binder_inner_proc_unlock(proc);
-		if (binder_proc_transaction(t, target_proc, target_thread)) {
+		if (!binder_proc_transaction(t, target_proc, target_thread)) {
 			binder_inner_proc_lock(proc);
 			binder_pop_transaction_ilocked(thread, t);
 			binder_inner_proc_unlock(proc);
@@ -4159,7 +4154,7 @@ static void binder_transaction(struct binder_proc *proc,
 		BUG_ON(target_node == NULL);
 		BUG_ON(t->buffer->async_transaction != 1);
 		binder_enqueue_thread_work(thread, tcomplete);
-		if (binder_proc_transaction(t, target_proc, NULL))
+		if (!binder_proc_transaction(t, target_proc, NULL))
 			goto err_dead_proc_or_thread;
 	}
 	if (target_thread)
@@ -5630,6 +5625,33 @@ static void binder_add_freeze_work(struct binder_proc *proc, bool is_frozen)
 	struct binder_ref *ref;
 
 	binder_inner_proc_lock(proc);
+	/*
+	 * Nothing to do unless some client actually registered a freeze
+	 * notification (BC_REQUEST_FREEZE_NOTIFICATION). Walking every node
+	 * of the target and bouncing the proc lock around costs real time and
+	 * this runs for each process AMS freezes, so check first. If no ref
+	 * carries a binder_ref_freeze the loop below would skip everything.
+	 */
+	{
+		bool any = false;
+
+		for (n = rb_first(&proc->nodes); n && !any; n = rb_next(n)) {
+			struct binder_node *node;
+
+			node = rb_entry(n, struct binder_node, rb_node);
+			hlist_for_each_entry(ref, &node->refs, node_entry) {
+				if (ref->freeze) {
+					any = true;
+					break;
+				}
+			}
+		}
+		if (!any) {
+			binder_inner_proc_unlock(proc);
+			return;
+		}
+	}
+
 	for (n = rb_first(&proc->nodes); n; n = rb_next(n)) {
 		struct binder_node *node;
 
