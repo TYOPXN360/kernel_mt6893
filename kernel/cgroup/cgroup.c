@@ -3172,8 +3172,6 @@ static void cgroup_enable_dfl_controllers(void)
 		 * cpuset_css_online() seeds those from the parent, so the
 		 * per-uid groups libprocessgroup creates are usable.
 		 */
-		if (!strcmp(ss->name, "cpuset") && !root->dfl_cgrp->kn)
-			continue;
 
 		enable |= 1u << ssid;
 	}

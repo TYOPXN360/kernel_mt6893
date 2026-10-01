@@ -2089,8 +2089,9 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
 		 * subtree_control every write to the child's cgroup.procs was
 		 * rejected. Seed the configuration from the parent as well.
 		 */
-		cpumask_copy(cs->cpus, parent->cpus);
-		cs->mems = parent->mems;
+		cpumask_copy(cs->cpus_allowed, parent->cpus_allowed);
+		cpumask_copy(cs->cpus_requested, parent->cpus_requested);
+		cs->mems_allowed = parent->mems_allowed;
 		cpumask_copy(cs->effective_cpus, parent->effective_cpus);
 		cs->effective_mems = parent->effective_mems;
 	}
