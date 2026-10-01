@@ -2101,6 +2101,8 @@ struct dentry *cgroup_do_mount(struct file_system_type *fs_type, int flags,
 	return dentry;
 }
 
+static void cgroup_enable_dfl_controllers(void);
+
 static struct dentry *cgroup_mount(struct file_system_type *fs_type,
 			 int flags, const char *unused_dev_name,
 			 void *data)
@@ -2138,8 +2140,21 @@ static struct dentry *cgroup_mount(struct file_system_type *fs_type,
 
 		dentry = cgroup_do_mount(&cgroup2_fs_type, flags, &cgrp_dfl_root,
 					 CGROUP2_SUPER_MAGIC, ns);
-		if (!IS_ERR(dentry))
+		if (!IS_ERR(dentry)) {
 			apply_cgroup_root_flags(root_flags);
+			/*
+			 * Turn the domain controllers on for the default
+			 * hierarchy as soon as it is mounted, so cpuset and
+			 * cpu are usable without depending on userspace
+			 * writing cgroup.subtree_control. Doing it here (rather
+			 * than from a late_initcall) is deliberate: the
+			 * hierarchy does not exist before this point, and a
+			 * v1 mount that follows would call
+			 * rebind_subsystems() and take the controllers away
+			 * again - our cgroups.json no longer requests them.
+			 */
+			cgroup_enable_dfl_controllers();
+		}
 	} else {
 		dentry = cgroup1_mount(&cgroup_fs_type, flags, data,
 				       CGROUP_SUPER_MAGIC, ns);
@@ -3093,6 +3108,73 @@ static void cgroup_apply_control_disable(struct cgroup *cgrp)
  * throughout @cgrp's subtree, updates csses accordingly and perform
  * process migrations.
  */
+/*
+ * cgroup_enable_dfl_controllers - turn on the domain controllers that ship
+ * with dfl_cftypes in the default hierarchy.
+ *
+ * Android normally does this from userspace: libprocessgroup writes
+ * "+cpu +cpuset" to cgroup.subtree_control for the descriptors listed in
+ * cgroups.json. That only ever reaches the root, and it is easy to get wrong -
+ * a duplicate PRODUCT_COPY_FILES entry silently shadows ours, which is exactly
+ * how cpuset and cpu ended up listed in cgroup.controllers but never enabled.
+ *
+ * Doing it here means the controllers are active as soon as the cgroup2
+ * hierarchy is mounted, with no dependency on the vendor partition. Any v1
+ * hierarchy mounted afterwards would still call rebind_subsystems() and take
+ * them back, but cgroups.json no longer requests them for v1.
+ *
+ * cpuset needs every child cgroup to have non-empty cpus/mems before it can
+ * join a domain, so cpuset is only enabled when the root actually has a mask
+ * configured; otherwise it is skipped rather than left in a half state.
+ */
+static void cgroup_enable_dfl_controllers(void)
+{
+	struct cgroup *root = &cgrp_dfl_root.cgrp;
+	struct cgroup_subsys *ss;
+	u16 enable = 0;
+	int ssid;
+
+	if (!cgrp_dfl_visible)
+		return;
+
+	mutex_lock(&cgroup_mutex);
+
+	for (ssid = 1; ssid < CGROUP_SUBSYS_COUNT; ssid++) {
+		ss = cgroup_subsys[ssid];
+		/*
+		 * Only consider controllers that are actually bound to the
+		 * unified hierarchy. cgroup_subsys_enabled()/on_dfl() are
+		 * static-branch helpers that need a bare identifier, so read
+		 * the root's masks directly.
+		 */
+		if (!ss || !(cgrp_dfl_root.subsys_mask & (1u << ssid)) ||
+		    !ss->dfl_cftypes)
+			continue;
+
+		/*
+		 * The freezer is a domain controller on the unified hierarchy
+		 * but has no control files: it works through cgroup.freeze on
+		 * each cgroup, so it must stay out of subtree_control.
+		 */
+		if (!strcmp(ss->name, "freezer"))
+			continue;
+
+		enable |= 1u << ssid;
+	}
+
+	/*
+	 * The root may have tasks, which normally blocks enabling subtree
+	 * controllers ("no internal processes"). The root is exempt from that
+	 * rule, so enable what we can.
+	 */
+	if (enable) {
+		root->subtree_control |= enable;
+		cgroup_apply_control(root);
+	}
+
+	mutex_unlock(&cgroup_mutex);
+}
+
 static int cgroup_apply_control(struct cgroup *cgrp)
 {
 	int ret;
