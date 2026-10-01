@@ -211,3 +211,38 @@ cpuset 声明为 v1 路径：
   清理 `out/soong/.siso_fs_state*` `.siso_deps*`、对应模块的
   `out/soong/.intermediates/...` 目录后重跑即可。
 - `out/soong/.intermediates` 超过 100GB，磁盘吃紧时优先清理。
+
+## ReKernel-X 运行时验证结论（2026-10-01）
+
+内核侧移植完成并验证：
+
+- `drivers/rekernel_x/` 以 `obj-y` + `late_initcall(rkx_init)` 内建（非 GKI 树不能加载 .ko）
+- 设备上确认 35 个 `rkx_*` 符号存在，`__initcall_57_86_rkx_init7` 正确落在 `.initcall.7`
+- genl family `rekernel_x2` 注册成功，ReKernel-X 管理器显示 netlink 已连接
+
+**收不到事件的原因不是内核问题。** ReKernel-X 的三个事件源都以
+`rkx_is_frozen(task)` 为前提（rkx_binder.c、rkx_signal.c、rkx_netfilter.c），
+而该函数读的是进程的 TASK_FROZEN 状态。LineageOS 24 **不包含 oomd**
+（`system/oomd` 在树中不存在，manifest 里也没有），因此没有任何服务去真正
+冻结进程，`rkx_is_frozen()` 恒为假，事件全被过滤掉。
+
+freezer 机制本身是好的，实测：
+
+    # echo 1 > /sys/fs/cgroup/rkxfz/cgroup.freeze   # 写入成功
+    # cat /sys/fs/cgroup/rkxfz/cgroup.events
+    populated 1
+    frozen 1
+
+把 system_server 移入并冻结，`cgroup.events` 立刻显示 `frozen 1`，解冻后系统
+恢复正常。要让 ReKernel-X 真正收到消息，需要一个会调用
+`cgroup.freeze` / `freezer_state` 的用户态服务，AOSP 侧就是 oomd。
+
+## cgroup v2 迁移的剩余缺口
+
+- 825 个进程仍留在根 cgroup，`/system` 层级根本不存在；`apps/uid_*` 子组是
+  空的。libprocessgroup 没有把进程归类到 v2 的子层级，Android 的进程管理
+  实际上没有工作在 v2 上。
+- `cgroup.controllers` 为 `cpuset cpu memory pids`，不含 `freezer`。MTK 的
+  freezer 不走标准 v2 暴露路径，而是每层级自带 `cgroup.freeze` 文件。
+- `io` / `hugetlb` / `misc` 三个控制器的源码在本树中不存在
+  （`kernel/cgroup/blkio.c` 等整个文件缺失），需从 5.x 移植。
