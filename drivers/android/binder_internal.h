@@ -259,6 +259,7 @@ struct binder_work {
 		BINDER_WORK_DEAD_BINDER,
 		BINDER_WORK_DEAD_BINDER_AND_CLEAR,
 		BINDER_WORK_CLEAR_DEATH_NOTIFICATION,
+		BINDER_WORK_FROZEN_BINDER,
 	} type;
 };
 
@@ -320,6 +321,14 @@ struct binder_ref_death {
 	binder_uintptr_t cookie;
 };
 
+struct binder_ref_freeze {
+	struct binder_work work;
+	binder_uintptr_t cookie;
+	bool is_frozen:1;
+	bool sent:1;
+	bool resend:1;
+};
+
 struct binder_ref_data {
 	int debug_id;
 	uint32_t desc;
@@ -339,6 +348,7 @@ struct binder_ref {
 	struct binder_proc *proc;
 	struct binder_node *node;
 	struct binder_ref_death *death;
+	struct binder_ref_freeze *freeze;
 };
 
 enum binder_deferred_state {
@@ -377,6 +387,8 @@ struct binder_proc {
 	bool sync_recv;
 	bool async_recv;
 	wait_queue_head_t freeze_wait;
+	/* list of delivered freeze notifications (protected by @inner_lock) */
+	struct list_head delivered_freeze;
 
 	struct list_head todo;
 	struct binder_stats stats;

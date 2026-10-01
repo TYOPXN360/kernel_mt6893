@@ -265,6 +265,7 @@ struct binder_node_info_for_ref {
 };
 
 struct binder_freeze_info {
+	__u32            pid;
 	__u32            enable;
 	__u32            timeout_ms;
 };
@@ -482,9 +483,15 @@ enum binder_driver_return_protocol {
 	 * a bcATTEMPT_ACQUIRE) failed (e.g. out of memory).  No parameters.
 	 */
 
-	/* _IO('r', 18) is BR_FROZEN_REPLY upstream (no freezer here) */
+	BR_FROZEN_REPLY = _IO('r', 18),
 
 	BR_ONEWAY_SPAM_SUSPECT = _IO('r', 19),
+
+	BR_TRANSACTION_PENDING_FROZEN = _IO('r', 20),
+
+	BR_FROZEN_BINDER = _IOR('r', 21, struct binder_frozen_state_info),
+
+	BR_CLEAR_FREEZE_NOTIFICATION_DONE = _IOR('r', 22, binder_uintptr_t),
 	/*
 	 * Current process sent too many oneway calls to target, and the last
 	 * asynchronous transaction makes the allocated async buffer size exceed
