@@ -110,24 +110,26 @@ static const struct genl_ops rkx_genl_ops[] = {
     {
         .cmd = RKX_C_ADD_MONITOR_NET,
         .doit = rkx_genl_monitor_net,
-        /*
-         * 4.14 validates attributes through genl_ops::policy; upstream
-         * keeps it on the family. All four ops share the same policy, and
-         * genl_register_family() applies it to whichever ops lack one.
-         */
         .policy = rkx_genl_policy,
+        .flags = GENL_ADMIN_PERM,
     },
     {
         .cmd = RKX_C_DEL_MONITOR_NET,
         .doit = rkx_genl_del_monitor_net,
+        .policy = rkx_genl_policy,
+        .flags = GENL_ADMIN_PERM,
     },
     {
         .cmd = RKX_C_ADD_FREE_ASYNC,
         .doit = rkx_genl_add_free_async,
+        .policy = rkx_genl_policy,
+        .flags = GENL_ADMIN_PERM,
     },
     {
         .cmd = RKX_C_DEL_FREE_ASYNC,
         .doit = rkx_genl_del_free_async,
+        .policy = rkx_genl_policy,
+        .flags = GENL_ADMIN_PERM,
     },
 };
 

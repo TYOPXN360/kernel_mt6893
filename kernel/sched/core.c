@@ -8866,6 +8866,26 @@ static ssize_t cpu_dfl_max_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off);
 #endif
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
+static u64 cpu_dfl_weight_read_u64(struct cgroup_subsys_state *css,
+				   struct cftype *cft)
+{
+	u64 shares = scale_load_down(css_tg(css)->shares);
+
+	return DIV_ROUND_CLOSEST_ULL(shares * CGROUP_WEIGHT_DFL, 1024);
+}
+
+static int cpu_dfl_weight_write_u64(struct cgroup_subsys_state *css,
+				    struct cftype *cft, u64 weight)
+{
+	if (weight < CGROUP_WEIGHT_MIN || weight > CGROUP_WEIGHT_MAX)
+		return -ERANGE;
+
+	weight = DIV_ROUND_CLOSEST_ULL(weight * 1024, CGROUP_WEIGHT_DFL);
+	return sched_group_set_shares(css_tg(css), scale_load(weight));
+}
+#endif
+
 static struct cftype cpu_dfl_files[] = {
 #ifdef CONFIG_CFS_BANDWIDTH
 	{
@@ -8874,11 +8894,13 @@ static struct cftype cpu_dfl_files[] = {
 		.write = cpu_dfl_max_write,
 	},
 #endif
+#ifdef CONFIG_FAIR_GROUP_SCHED
 	{
 		.name = "weight",
-		.read_u64 = cpu_shares_read_u64,
-		.write_u64 = cpu_shares_write_u64,
+		.read_u64 = cpu_dfl_weight_read_u64,
+		.write_u64 = cpu_dfl_weight_write_u64,
 	},
+#endif
 	{
 		.name = "stat",
 		.seq_show = cpu_stats_show,
@@ -8889,21 +8911,19 @@ static struct cftype cpu_dfl_files[] = {
 #ifdef CONFIG_CFS_BANDWIDTH
 /*
  * v2 exposes a single "cpu.max" file holding "<quota> <period>", or
- * "max <period>", both in nanoseconds. Drive it through the same v1 helpers
- * so both hierarchies stay backed by one implementation; v1 keeps the values
- * in microseconds, hence the conversions.
+ * "max <period>", both in nanoseconds. Use tg_set_cfs_bandwidth() directly
+ * so the pair is validated and committed as one update.
  */
 static int cpu_dfl_max_show(struct seq_file *sf, void *v)
 {
-	struct cgroup_subsys_state *css = seq_css(sf);
-	s64 quota = cpu_cfs_quota_read_s64(css, NULL);
-	u64 period = cpu_cfs_period_read_u64(css, NULL);
+	struct task_group *tg = css_tg(seq_css(sf));
+	u64 quota = tg->cfs_bandwidth.quota;
+	u64 period = ktime_to_ns(tg->cfs_bandwidth.period);
 
-	if (quota < 0)
-		seq_printf(sf, "max %llu\n", div_u64(period, 1000) * 1000);
+	if (quota == RUNTIME_INF)
+		seq_printf(sf, "max %llu\n", period);
 	else
-		seq_printf(sf, "%lld %llu\n", quota,
-			   div_u64(period, 1000) * 1000);
+		seq_printf(sf, "%llu %llu\n", quota, period);
 	return 0;
 }
 
@@ -8911,48 +8931,53 @@ static ssize_t cpu_dfl_max_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off)
 {
 	struct cgroup_subsys_state *css = of_css(of);
-	char *tmpbuf, *token;
-	s64 quota;
-	u64 period;
+	char *input_buf, *cursor, *quota_str, *period_str;
+	u64 quota, period;
 	ssize_t ret;
 
-	tmpbuf = kmalloc(strlen(buf) + 1, GFP_KERNEL);
-	if (!tmpbuf)
+	input_buf = kmalloc(strlen(buf) + 1, GFP_KERNEL);
+	if (!input_buf)
 		return -ENOMEM;
-	strcpy(tmpbuf, buf);
+	strcpy(input_buf, buf);
 
-	token = strsep(&tmpbuf, " ");
-	if (!token) {
+	cursor = input_buf;
+	quota_str = strsep(&cursor, " \t\n");
+	if (!quota_str || !*quota_str || !cursor) {
 		ret = -EINVAL;
 		goto out;
 	}
-	if (!strcmp(token, "max"))
-		quota = -1;
+	cursor = skip_spaces(cursor);
+	if (!*cursor) {
+		ret = -EINVAL;
+		goto out;
+	}
+	period_str = strsep(&cursor, " \t\n");
+	if (!period_str || !*period_str) {
+		ret = -EINVAL;
+		goto out;
+	}
+	if (cursor && *skip_spaces(cursor)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (!strcmp(quota_str, "max"))
+		quota = RUNTIME_INF;
 	else {
-		ret = kstrtos64(token, 0, &quota);
+		ret = kstrtou64(quota_str, 0, &quota);
 		if (ret)
 			goto out;
 	}
-
-	token = strsep(&tmpbuf, " ");
-	if (!token) {
-		ret = -EINVAL;
-		goto out;
-	}
-	ret = kstrtou64(token, 0, &period);
+	ret = kstrtou64(period_str, 0, &period);
 	if (ret)
 		goto out;
 
-	ret = cpu_cfs_quota_write_s64(css, NULL, quota);
-	if (ret)
-		goto out;
-	ret = cpu_cfs_period_write_u64(css, NULL, div_u64(period, 1000));
-	if (ret)
-		goto out;
-
-	ret = strlen(buf);
+	/* cpu.max uses nanoseconds; tg_set_cfs_bandwidth validates both together. */
+	ret = tg_set_cfs_bandwidth(css_tg(css), period, quota);
+	if (!ret)
+		ret = nbytes;
 out:
-	kfree(tmpbuf);
+	kfree(input_buf);
 	return ret;
 }
 #endif /* CONFIG_CFS_BANDWIDTH */

@@ -42,25 +42,30 @@ static void rkx_binder_alloc_new_buf_locked_vh(void *data, size_t size, size_t *
 		|| (alloc->free_async_space < RKX_WARN_AHEAD_SPACE))) {
 		rcu_read_lock();
 		p = find_task_by_vpid(alloc->pid);
+		if (p)
+			get_task_struct(p);
 		rcu_read_unlock();
-		if (p != NULL && rkx_is_frozen(p)) {
-			rkx_log_debug("Binder Free buffer full! from=%d | target=%d\n", task_uid(current).val, task_uid(p).val);
-			if (rkx_netlink_ready()) {
-				struct rkx_event event = {
-					.type = RKX_EVT_BINDER,
-					.u.binder = {
-						.binder_type = RKX_BINDER_FREE_BUFFER_FULL,
-						.oneway = 1,
-						.from_pid = task_tgid_nr(current),
-						.from_uid = task_uid(current).val,
-						.target_pid = task_tgid_nr(p),
-						.target_uid = task_uid(p).val,
-						.code = -1,
-						.rpc_name = "FREE_BUFFER_FULL",
-					},
-				};
-				rkx_send_message(&event);
+		if (p) {
+			if (rkx_is_frozen(p)) {
+				rkx_log_debug("Binder Free buffer full! from=%d | target=%d\n", task_uid(current).val, task_uid(p).val);
+				if (rkx_netlink_ready()) {
+					struct rkx_event event = {
+						.type = RKX_EVT_BINDER,
+						.u.binder = {
+							.binder_type = RKX_BINDER_FREE_BUFFER_FULL,
+							.oneway = 1,
+							.from_pid = task_tgid_nr(current),
+							.from_uid = task_uid(current).val,
+							.target_pid = task_tgid_nr(p),
+							.target_uid = task_uid(p).val,
+							.code = -1,
+							.rpc_name = "FREE_BUFFER_FULL",
+						},
+					};
+					rkx_send_message(&event);
+				}
 			}
+			put_task_struct(p);
 		}
 	}
 }

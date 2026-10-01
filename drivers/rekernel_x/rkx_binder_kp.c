@@ -21,7 +21,7 @@
 #include "binder_internal.h"
 
 static unsigned long (*k_kallsyms_lookup_name)(const char* name);
-static void (*k_binder_transaction_buffer_release)(struct binder_proc* proc, struct binder_thread* thread, struct binder_buffer* buffer, binder_size_t off_end_offset, bool is_failure);
+static void (*k_binder_transaction_buffer_release)(struct binder_proc* proc, struct binder_buffer* buffer, binder_size_t failed_at, bool is_failure);
 static void (*k_binder_alloc_free_buf)(struct binder_alloc* alloc, struct binder_buffer* buffer);
 static int (*k_binder_alloc_copy_from_buffer)(struct binder_alloc* alloc, void* dest, struct binder_buffer* buffer, binder_size_t buffer_offset, size_t bytes);
 static struct binder_stats(*k_binder_stats);
@@ -162,14 +162,14 @@ static struct binder_transaction* rk_binder_find_outdated_transaction_ilocked(
 }
 
 static inline void __nocfi rk_binder_release_entire_buffer(struct binder_proc* proc,
-	struct binder_thread* thread, struct binder_buffer* buffer, bool is_failure)
+	struct binder_buffer* buffer, bool is_failure)
 {
 	binder_size_t off_end_offset;
 
 	off_end_offset = ALIGN(buffer->data_size, sizeof(void*));
 	off_end_offset += buffer->offsets_size;
 
-	k_binder_transaction_buffer_release(proc, thread, buffer,
+	k_binder_transaction_buffer_release(proc, buffer,
 		off_end_offset, is_failure);
 }
 
@@ -200,7 +200,7 @@ static void __nocfi rkx_free_txn_func(struct work_struct *work)
 	struct rkx_free_txn_work *w =
 		container_of(work, struct rkx_free_txn_work, work);
 
-	rk_binder_release_entire_buffer(w->proc, NULL, w->buffer, false);
+	rk_binder_release_entire_buffer(w->proc, w->buffer, false);
 	k_binder_alloc_free_buf(&w->proc->alloc, w->buffer);
 	kfree(w->t);
 	rk_binder_stats_deleted(BINDER_STAT_TRANSACTION);
@@ -266,9 +266,12 @@ static int __nocfi rkx_binder_proc_transaction_pre(struct kprobe* p, struct pt_r
 			if (w) {
 				proc->tmp_ref++;
 				list_del_init(&t_outdated->work.entry);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0))
 				proc->outstanding_txns--;
-#endif
+				if (proc->outstanding_txns < 0)
+					pr_warn("%s: Unexpected outstanding_txns %d\n",
+						__func__, proc->outstanding_txns);
+				if (!proc->outstanding_txns && proc->is_frozen)
+					wake_up_interruptible_all(&proc->freeze_wait);
 			} else {
 				t_outdated = NULL;
 			}
