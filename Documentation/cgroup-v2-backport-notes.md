@@ -220,7 +220,11 @@ cpuset 声明为 v1 路径：
 - 设备上确认 35 个 `rkx_*` 符号存在，`__initcall_57_86_rkx_init7` 正确落在 `.initcall.7`
 - genl family `rekernel_x2` 注册成功，ReKernel-X 管理器显示 netlink 已连接
 
-**收不到事件的原因不是内核问题。** ReKernel-X 的三个事件源都以
+**最终验证通过**：手工用 cgroup v2 freezer 冻结一个进程、再向它发信号后，
+ReKernel-X 管理器 UI 从"问号"变为"打勾"，确认内核事件已通过 genl 送达用户态。
+即 netlink family 注册、hook 触发、事件组包上报整条链路都是通的。内核移植完成。
+
+下面是排查过程中的一段弯路，保留以备后查： ReKernel-X 的三个事件源都以
 `rkx_is_frozen(task)` 为前提（rkx_binder.c、rkx_signal.c、rkx_netfilter.c），
 而该函数读的是进程的 TASK_FROZEN 状态。LineageOS 24 **不包含 oomd**
 （`system/oomd` 在树中不存在，manifest 里也没有），因此没有任何服务去真正
