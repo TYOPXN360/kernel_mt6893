@@ -367,6 +367,16 @@ struct binder_proc {
 	struct hlist_node deferred_work_node;
 	int deferred_work;
 	bool is_dead;
+	/*
+	 * Freezer support (upstream 5.15 binder_internal.h). All are protected
+	 * by @inner_lock. freeze_wait is woken whenever the outstanding
+	 * transaction count drains on a frozen process.
+	 */
+	int outstanding_txns;
+	bool is_frozen;
+	bool sync_recv;
+	bool async_recv;
+	wait_queue_head_t freeze_wait;
 
 	struct list_head todo;
 	struct binder_stats stats;
