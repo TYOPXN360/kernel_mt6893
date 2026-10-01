@@ -3167,11 +3167,19 @@ static void cgroup_enable_dfl_controllers(void)
 			continue;
 
 		/*
-		 * cpuset needs every child cgroup to carry a non-empty
-		 * cpuset.cpus and cpuset.mems before it may accept processes.
-		 * cpuset_css_online() seeds those from the parent, so the
-		 * per-uid groups libprocessgroup creates are usable.
+		 * cpuset is left to userspace. cgroup v2 requires a cgroup to
+		 * have cpuset.cpus/cpuset.mems before it may take tasks, and
+		 * the kernel does not propagate a parent's subtree_control to
+		 * a child made with mkdir. Enabling it only at the root
+		 * therefore leaves /sys/fs/cgroup/apps/uid_N without the cpuset
+		 * control files, and no task can be placed in them.
+		 * libprocessgroup's createProcessGroupInternal() does call
+		 * ActivateControllers() for each group it creates, so
+		 * cgroups.json (NeedsActivation, MaxActivationDepth 3) is the
+		 * right place for it.
 		 */
+		if (!strcmp(ss->name, "cpuset"))
+			continue;
 
 		enable |= 1u << ssid;
 	}
