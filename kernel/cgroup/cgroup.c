@@ -3139,7 +3139,14 @@ static void cgroup_enable_dfl_controllers(void)
 
 	mutex_lock(&cgroup_mutex);
 
-	for (ssid = 1; ssid < CGROUP_SUBSYS_COUNT; ssid++) {
+	/*
+	 * Start at 0: this tree's runtime subsystem ids are cpuset=0, cpu=1,
+	 * which is not the ordering include/linux/cgroup-defs.h suggests.
+	 * cpuset only gets into subtree_control if it is on the default
+	 * hierarchy and offers v2 control files, so scanning the whole range
+	 * is safe.
+	 */
+	for (ssid = 0; ssid < CGROUP_SUBSYS_COUNT; ssid++) {
 		ss = cgroup_subsys[ssid];
 		/*
 		 * Only consider controllers that are actually bound to the
@@ -3157,6 +3164,21 @@ static void cgroup_enable_dfl_controllers(void)
 		 * each cgroup, so it must stay out of subtree_control.
 		 */
 		if (!strcmp(ss->name, "freezer"))
+			continue;
+
+		/*
+		 * cpuset is excluded for now. With cpuset in the root's
+		 * subtree_control, cgroup v2 requires every child cgroup to
+		 * carry a non-empty cpuset.cpus and cpuset.mems before it may
+		 * accept processes - and cgroups created by libprocessgroup do
+		 * not have those files, so every write to their cgroup.procs
+		 * fails with EPERM. Enabling it here would lock processes out
+		 * of their own groups. The cgroup v2 rules that would need to
+		 * initialise a child's cpuset on creation are not implemented
+		 * in this tree, so cpuset has to be enabled from userspace
+		 * (cgroups.json) once that side is in place.
+		 */
+		if (!strcmp(ss->name, "cpuset"))
 			continue;
 
 		enable |= 1u << ssid;
