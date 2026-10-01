@@ -1999,15 +1999,25 @@ static struct cftype cpuset_dfl_cftypes[] = {
 		.max_write_len = (100U + 6 * MAX_NUMNODES),
 		.private = FILE_MEMLIST,
 	},
-
+	/*
+	 * These are spelled "cpuset.cpus.effective" and "cpuset.mems.effective"
+	 * by the unified (v2) cgroup interface. The subsystem name is prepended
+	 * at runtime by __cftype_name() in kernel/cgroup/cgroup.c, so only the
+	 * suffix appears here. Documentation/cgroup-v2.txt in this tree does not
+	 * spell out these names, so this follows the upstream unified-hierarchy
+	 * naming rather than a local document.
+	 *
+	 * The v1 array above deliberately keeps its own "effective_cpus"/
+	 * "effective_mems" names, which is what cpuset v1 consumers expect.
+	 */
 	{
-		.name = "effective_cpus",
+		.name = "cpus.effective",
 		.seq_show = cpuset_common_seq_show,
 		.private = FILE_EFFECTIVE_CPULIST,
 	},
 
 	{
-		.name = "effective_mems",
+		.name = "mems.effective",
 		.seq_show = cpuset_common_seq_show,
 		.private = FILE_EFFECTIVE_MEMLIST,
 	},

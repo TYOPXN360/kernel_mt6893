@@ -8753,6 +8753,26 @@ static int __cfs_schedulable(struct task_group *tg, u64 period, u64 quota)
 	return ret;
 }
 
+/*
+ * Note on cgroup v2 ABI compliance (known residual, not a bug in this port).
+ *
+ * Documentation/cgroup-v2.txt, the v2 specification shipped with this tree,
+ * states that cpu.stat reports six stats: usage_usec, user_usec, system_usec,
+ * nr_periods, nr_throttled and throttled_usec.
+ *
+ * This tree only provides the CFS bandwidth half of that set, and spells it
+ * throttled_time rather than throttled_usec. The three usage counters are
+ * missing because this 4.14 cpuacct (kernel/sched/cpuacct.c) publishes only
+ * .legacy_cftypes and has no .dfl_cftypes at all, so there is no v2 CPU time
+ * accounting to report in the first place. The v1 file has the same three
+ * fields, so cpu_stats_show() below is deliberately shared by both
+ * hierarchies.
+ *
+ * Consumers must not assume the usage counters are present. Filling them in
+ * would mean porting v2 CPU accounting into cpuacct, which is a much larger
+ * change than this backport and is deliberately left out rather than faked
+ * here.
+ */
 static int cpu_stats_show(struct seq_file *sf, void *v)
 {
 	struct task_group *tg = css_tg(seq_css(sf));

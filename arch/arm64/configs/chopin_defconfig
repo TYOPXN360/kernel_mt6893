@@ -555,17 +555,39 @@ CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK=y
 CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK=y
 CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK=y
 
-# cgroup v2. kernel/cgroup/pids.c already provides .dfl_cftypes, so the PIDs
-# controller is v2 capable and only needs enabling. MTK's tree dropped the
-# cpu and io controller sources entirely and cpuset.c lost its .dfl_cftypes,
-# so those still need to be ported.
+# cgroup v2.
+#
+# CONFIG_CGROUPS is the gate for everything below: the per-controller cgroup
+# options (CGROUP_PIDS, CGROUP_FREEZER, CPUSETS, MEMCG, CGROUP_SCHED,
+# CGROUP_CPUACCT, ...) are plain menuconfig booleans inside "if CGROUPS" in
+# init/Kconfig and none of them select their way in. Without CONFIG_CGROUPS
+# they are all silently dropped by Kconfig, together with the CFS bandwidth
+# chain below (CGROUP_SCHED -> FAIR_GROUP_SCHED -> CFS_BANDWIDTH), which
+# leaves a kernel with no cgroup support at all even though this defconfig
+# still listed a couple of them. Enabling the gate explicitly keeps the file
+# self-contained and reproducible.
+CONFIG_CGROUPS=y
+
+# Per-controller options needed by the cgroup v2 hierarchy this device runs:
+# kernel/cgroup/pids.c provides .dfl_cftypes, cpuset.c provides
+# cpuset_dfl_cftypes, mm/memcontrol.c provides memory_files as .dfl_cftypes,
+# and the freezer acts on the unified hierarchy through cgroup.freeze.
+# CONFIG_CPUSETS is deliberately not repeated here: the vendor section near the
+# top of this file already enables it (it sits with the uclamp/schedtune
+# options), and a second entry would only be a duplicate.
 CONFIG_CGROUP_PIDS=y
+CONFIG_MEMCG=y
+CONFIG_CGROUP_FREEZER=y
+CONFIG_CGROUP_CPUACCT=y
 
 # cgroup v2 cpu controller. The 4.14 tree already carries MediaTek's backport
 # of the 5.x cfs_rq-level throttling engine (cfs_rq->tg, cfs_bandwidth and the
 # hrtimer period timer in fair.c), but the bandwidth fields of
 # struct cfs_bandwidth and the runtime refill live behind CONFIG_CFS_BANDWIDTH,
-# which the Kconfig defaults to n.
+# which the Kconfig defaults to n. cpuacct itself has no .dfl_cftypes in this
+# tree, so v2 CPU usage counters are unavailable - see cpu_stats_show().
+CONFIG_CGROUP_SCHED=y
+CONFIG_FAIR_GROUP_SCHED=y
 CONFIG_CFS_BANDWIDTH=y
 
 # ReKernel-X (https://github.com/myflavor/ReKernel-X): surfaces Binder, signal
