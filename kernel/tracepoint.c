@@ -639,3 +639,35 @@ void syscall_unregfunc(void)
 	}
 }
 #endif
+
+/*
+ * android_rvh_probe_register - connect a vendor hook probe to its tracepoint
+ *
+ * Backport of the helper include/trace/hooks/vendor_hooks.h expects. Vendor
+ * hooks are plain tracepoints underneath, so registration is a plain
+ * tracepoint probe attach; the difference is only that a missing tracepoint is
+ * not an error (the hook may live in a module that is not built in).
+ */
+int android_rvh_probe_register(struct tracepoint *tp, void *probe, void *data)
+{
+	if (!tp)
+		return -EINVAL;
+
+	return tracepoint_probe_register_prio(tp, probe, data, 1);
+}
+EXPORT_SYMBOL_GPL(android_rvh_probe_register);
+
+/*
+ * android_rvh_probe_unregister - detach a vendor hook probe
+ *
+ * Counterpart of android_rvh_probe_register(). The AOSP header omits it since
+ * its hooks are permanent, but ReKernel-X registers on teardown as well.
+ */
+int android_rvh_probe_unregister(struct tracepoint *tp, void *probe, void *data)
+{
+	if (!tp)
+		return -EINVAL;
+
+	return tracepoint_probe_unregister(tp, probe, data);
+}
+EXPORT_SYMBOL_GPL(android_rvh_probe_unregister);

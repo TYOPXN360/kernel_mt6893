@@ -46,6 +46,16 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/signal.h>
 
+/*
+ * Vendor hooks: the hook definitions themselves live in
+ * drivers/android/vendor_hooks.c, so only declare them here. Undefining
+ * CREATE_TRACE_POINTS first is what keeps trace/hooks/signal.h from emitting
+ * a second set of "signal" tracepoint globals on top of the native ones above.
+ */
+#undef CREATE_TRACE_POINTS
+#include <trace/hooks/signal.h>
+
+
 #include <asm/param.h>
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -1219,6 +1229,8 @@ int do_send_sig_info(int sig, struct siginfo *info, struct task_struct *p,
 {
 	unsigned long flags;
 	int ret = -ESRCH;
+
+	trace_android_vh_do_send_sig_info(sig, current, p);
 
 	if (lock_task_sighand(p, &flags)) {
 		ret = send_signal(sig, info, p, group);

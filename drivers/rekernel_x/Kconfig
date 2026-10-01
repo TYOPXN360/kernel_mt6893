@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0
+config REKERNELX
+	bool "ReKernel-X"
+	depends on KSU
+	help
+	  ReKernel-X surfaces kernel-side events for frozen (cached) processes so
+	  tombstone-style modules can react to them:
+	    - Binder: a frozen process receiving a Binder call
+	    - Signal: a frozen process receiving SIGKILL and friends
+	    - Network: a monitored UID receiving an inbound packet
+
+	  Events are delivered to userspace over Generic Netlink. The hooks are
+	  resolved at runtime through kprobes, so the module does not need
+	  compile-time access to the binder internals and builds against both
+	  4.14 and 5.10+ trees.
+
+	  Say N if unsure.

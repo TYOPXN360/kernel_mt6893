@@ -567,3 +567,14 @@ CONFIG_CGROUP_PIDS=y
 # struct cfs_bandwidth and the runtime refill live behind CONFIG_CFS_BANDWIDTH,
 # which the Kconfig defaults to n.
 CONFIG_CFS_BANDWIDTH=y
+
+# ReKernel-X (https://github.com/myflavor/ReKernel-X): surfaces Binder, signal
+# and netfilter events for frozen processes to userspace over Generic Netlink.
+# Built as an in-tree module so it shares this kernel's headers and kprobes.
+CONFIG_REKERNELX=y
+
+# Vendor trace hooks, used by ReKernel-X (drivers/rekernel_x) to observe Binder
+# and signal activity around frozen processes. TRACEPOINTS has no prompt and
+# defaults to n in this tree, so both have to be turned on explicitly.
+CONFIG_TRACEPOINTS=y
+CONFIG_ANDROID_VENDOR_HOOKS=y
