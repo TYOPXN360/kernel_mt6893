@@ -296,6 +296,20 @@ struct cfs_bandwidth {
 };
 
 /* task group related information */
+/* Default task group related information */
+#ifdef CONFIG_CGROUP_CPUACCT
+/*
+ * Per-CPU CPU time kept for each task_group. Deliberately minimal: a full
+ * struct kernel_cpustat would cost ten u64s per cpu per group, while only
+ * these three values are ever reported back through cgroup v2 cpu.stat.
+ */
+struct task_group_cputat {
+	u64 usage_ns;	/* scheduler runtime, from cpuacct_charge() */
+	u64 user_ns;	/* user+nice, from cpuacct_account_field() */
+	u64 sys_ns;	/* system+irq+softirq, from cpuacct_account_field() */
+};
+#endif
+
 struct task_group {
 	struct cgroup_subsys_state css;
 
@@ -336,11 +350,54 @@ struct task_group {
 
 	struct cfs_bandwidth cfs_bandwidth;
 
+#ifdef CONFIG_CGROUP_CPUACCT
+	/*
+	 * Per-CPU CPU time charged to this group and to every ancestor.
+	 *
+	 * Two independent sources, deliberately not conflated:
+	 *   user_ns / sys_ns come from cpuacct_account_field(), i.e. the
+	 *     tick/cputime split performed by cputime.c, and back user_usec /
+	 *     system_usec;
+	 *   usage_ns comes from cpuacct_charge(), i.e. the scheduler runtime
+	 *     event, and backs usage_usec.
+	 *
+	 * usage_usec is therefore NOT computed as user + system: the scheduler
+	 * runtime and the tick-based split are different measurements and are
+	 * kept apart on purpose.
+	 *
+	 * A purpose-built three-counter struct is used rather than a full
+	 * struct kernel_cpustat (which would cost ten u64s per cpu per group)
+	 * because only these three values are ever read back.
+	 *
+	 * Each counter is per-CPU so concurrent charges on different CPUs never
+	 * contend, and the reader folds them together with a plain sum under
+	 * rcu_read_lock().
+	 *
+	 * Charged from the task's cpu controller task_group(), which is the very
+	 * task_group backing the v2 hierarchy: sched_change_group() derives
+	 * sched_task_group from task_css_check(tsk, cpu_cgrp_id), not from a
+	 * v1-only mapping.
+	 */
+	struct task_group_cputat __percpu *cpustat;
+#endif
+
 #ifdef CONFIG_UCLAMP_TASK_GROUP
 	struct			uclamp_se uclamp[UCLAMP_CNT];
 #endif
 
 };
+
+/* Resolve a cpu controller css back to its task_group.
+ *
+ * Only valid for the css owned by the cpu (cgroup v2) controller, which is
+ * the one stored in task_css(css, cpu_cgrp_id) and in task_group(). Passing
+ * the css of any other controller would be a type confusion, so callers must
+ * only feed this the css they obtained from a cpu cftype.
+ */
+static inline struct task_group *css_tg(struct cgroup_subsys_state *css)
+{
+	return css ? container_of(css, struct task_group, css) : NULL;
+}
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 #define ROOT_TASK_GROUP_LOAD	NICE_0_LOAD

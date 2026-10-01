@@ -40,6 +40,7 @@
 #endif
 
 #include "sched.h"
+#include "cpuacct.h"
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
 
@@ -7705,6 +7706,18 @@ void __init sched_init(void)
 
 #endif /* CONFIG_RT_GROUP_SCHED */
 	}
+
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+	/*
+	 * The root task_group is created here rather than by
+	 * sched_create_group(), so give it its per-CPU counters explicitly.
+	 * Without them the root would be a NULL cpustat in the parent-chain
+	 * walk in cpuacct_account_field(), which stops at it.
+	 */
+	root_task_group.cpustat = alloc_percpu(struct task_group_cputat);
+	if (!root_task_group.cpustat)
+		panic("Cannot allocate root task_group cpustat\n");
+#endif
 #ifdef CONFIG_CPUMASK_OFFSTACK
 	for_each_possible_cpu(i) {
 		per_cpu(load_balance_mask, i) = (cpumask_var_t)kzalloc_node(
@@ -8056,6 +8069,22 @@ static void sched_free_group(struct task_group *tg)
 #if defined(CONFIG_UCLAMP_TASK_GROUP) && !defined(CONFIG_SCHED_TUNE)
 	free_uclamp_sched_group(tg);
 #endif
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+	/*
+	 * Two callers reach here with different guarantees:
+	 *   - cpu_cgroup_css_free(), after css_released() and an RCU grace
+	 *     period (sched_free_group_rcu()). No charge can still be walking
+	 *     this group, because cpuacct_account_field()/cpuacct_charge() hold
+	 *     rcu_read_lock() across the parent-chain walk.
+	 *   - sched_create_group()'s error path, for a group that was never
+	 *     published, so nothing can be walking it and no grace period is
+	 *     needed.
+	 * free_percpu(NULL) is a no-op, and either allocation may be absent when
+	 * the other failed, so plain free_percpu on both is safe.
+	 */
+	free_percpu(tg->cpustat);
+	tg->cpustat = NULL;
+#endif
 	free_fair_sched_group(tg);
 	free_rt_sched_group(tg);
 	autogroup_free(tg);
@@ -8076,6 +8105,18 @@ struct task_group *sched_create_group(struct task_group *parent)
 
 	if (!alloc_rt_sched_group(tg, parent))
 		goto err;
+
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+	/*
+	 * Per-CPU user/system time for this group. Allocated here so that it
+	 * shares the task_group's css lifetime exactly: created before the css
+	 * is published, and released in sched_free_group(), which already runs
+	 * an RCU grace period after css_released().
+	 */
+	tg->cpustat = alloc_percpu(struct task_group_cputat);
+	if (!tg->cpustat)
+		goto err;
+#endif
 
 #if defined(CONFIG_UCLAMP_TASK_GROUP) && !defined(CONFIG_SCHED_TUNE)
 	if (!alloc_uclamp_sched_group(tg, parent))
@@ -8188,11 +8229,6 @@ void sched_move_task(struct task_struct *tsk)
 		set_curr_task(rq, tsk);
 
 	task_rq_unlock(rq, tsk, &rf);
-}
-
-static inline struct task_group *css_tg(struct cgroup_subsys_state *css)
-{
-	return css ? container_of(css, struct task_group, css) : NULL;
 }
 
 static struct cgroup_subsys_state *
@@ -8754,24 +8790,13 @@ static int __cfs_schedulable(struct task_group *tg, u64 period, u64 quota)
 }
 
 /*
- * Note on cgroup v2 ABI compliance (known residual, not a bug in this port).
+ * cgroup v1 "cpu.stat": the CFS bandwidth half only, in the historical unit.
  *
- * Documentation/cgroup-v2.txt, the v2 specification shipped with this tree,
- * states that cpu.stat reports six stats: usage_usec, user_usec, system_usec,
- * nr_periods, nr_throttled and throttled_usec.
- *
- * This tree only provides the CFS bandwidth half of that set, and spells it
- * throttled_time rather than throttled_usec. The three usage counters are
- * missing because this 4.14 cpuacct (kernel/sched/cpuacct.c) publishes only
- * .legacy_cftypes and has no .dfl_cftypes at all, so there is no v2 CPU time
- * accounting to report in the first place. The v1 file has the same three
- * fields, so cpu_stats_show() below is deliberately shared by both
- * hierarchies.
- *
- * Consumers must not assume the usage counters are present. Filling them in
- * would mean porting v2 CPU accounting into cpuacct, which is a much larger
- * change than this backport and is deliberately left out rather than faked
- * here.
+ * This is the pre-existing behaviour and is intentionally left exactly as it
+ * was, including the field name throttled_time and its raw nanosecond value.
+ * cpuacct reports nanoseconds on v1 (nsec_to_clock_t) and cfs_bandwidth's
+ * throttled_time is a plain rq_clock() nanosecond accumulator, so both halves
+ * agree; renaming or rescaling it here would break existing v1 users.
  */
 static int cpu_stats_show(struct seq_file *sf, void *v)
 {
@@ -8784,6 +8809,7 @@ static int cpu_stats_show(struct seq_file *sf, void *v)
 
 	return 0;
 }
+
 #endif /* CONFIG_CFS_BANDWIDTH */
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
@@ -8906,6 +8932,97 @@ static int cpu_dfl_weight_write_u64(struct cgroup_subsys_state *css,
 }
 #endif
 
+/*
+ * cgroup v2 "cpu.stat".
+ *
+ * Documentation/cgroup-v2.txt in this tree lists six fields, all durations in
+ * microseconds: usage_usec, user_usec, system_usec, nr_periods, nr_throttled
+ * and throttled_usec. All six are produced here.
+ *
+ * Where each half comes from:
+ *   - usage_usec is accumulated from cpuacct_charge(), the scheduler runtime
+ *     event, into task_group::usage_ns;
+ *   - user_usec and system_usec are accumulated from
+ *     cpuacct_account_field(), the tick/cputime split that cputime.c already
+ *     performs, into task_group::cpustat.
+ * usage_usec is deliberately NOT computed as user_usec + system_usec: the
+ * scheduler runtime and the tick-based split are different measurements and
+ * are not guaranteed to agree, so the two are kept apart.
+ *
+ * Both counter sets are per-CPU and are charged to a group and to every
+ * ancestor, so a parent's figure already includes its children. That is what
+ * the v2 ABI asks for here (the usage counters account for the processes in
+ * the cgroup and its descendants), so no child subtraction is performed.
+ *
+ * Why cpu.stat needs its own handler instead of sharing cpu_stats_show():
+ * the v2 ABI spells the field throttled_usec (microseconds) where v1 spells it
+ * throttled_time (raw nanoseconds). cfs_bandwidth::throttled_time is a plain
+ * rq_clock() nanosecond accumulator (see __cfs_rq_throttled() in fair.c), so
+ * the v2 value is that divided by NSEC_PER_USEC. v1 is left byte-for-byte as
+ * it was, because renaming or rescaling it would break existing users.
+ *
+ * Placement note: this handler deliberately lives outside the large
+ * "#ifdef CONFIG_CFS_BANDWIDTH" block that wraps the bandwidth code. It only
+ * needs the enclosing CONFIG_CGROUP_SCHED context, alongside cpu_files[] and
+ * cpu_dfl_files[]. cpu_dfl_files[] references it unconditionally, so it must
+ * exist whenever CONFIG_CGROUP_SCHED=y - including when
+ * CONFIG_CFS_BANDWIDTH=n. Its own #ifdef covers that case by reporting the
+ * three bandwidth fields as zero, which is accurate rather than invented:
+ * without CONFIG_CFS_BANDWIDTH there is no throttling state to report.
+ *
+ * Configuration dependencies, which are three independent knobs:
+ *   - this handler exists only under CONFIG_CGROUP_SCHED, because it belongs
+ *     to cpu_dfl_files[]; cpu_cgroup_css_alloc(), sched_create_group() and
+ *     root_task_group all live in that same guard;
+ *   - the three usage fields additionally require CONFIG_CGROUP_CPUACCT,
+ *     which is what builds cpuacct.o and what owns task_group::cpustat.
+ *     Without it they are omitted rather than faked;
+ *   - the three bandwidth fields additionally require CONFIG_CFS_BANDWIDTH.
+ * The device defconfig enables all three.
+ */
+static int cpu_dfl_stats_show(struct seq_file *sf, void *v)
+{
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+	struct cgroup_subsys_state *css = seq_css(sf);
+	u64 usage_ns = 0, user_ns = 0, sys_ns = 0;
+
+	cpuacct_get_task_group_usage(css, &usage_ns, &user_ns, &sys_ns);
+
+	seq_printf(sf, "usage_usec %llu\n", div_u64(usage_ns, NSEC_PER_USEC));
+	seq_printf(sf, "user_usec %llu\n", div_u64(user_ns, NSEC_PER_USEC));
+	seq_printf(sf, "system_usec %llu\n", div_u64(sys_ns, NSEC_PER_USEC));
+#else
+	/*
+	 * CONFIG_CGROUP_CPUACCT=n: no per-group counters are charged at all, so
+	 * the three usage fields are omitted rather than printed as a zero that
+	 * would look like real accounting. Consumers must already tolerate a
+	 * short file on a kernel built this way.
+	 */
+#endif
+#ifdef CONFIG_CFS_BANDWIDTH
+	{
+		struct task_group *tg = css_tg(seq_css(sf));
+		struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+
+		seq_printf(sf, "nr_periods %d\n", cfs_b->nr_periods);
+		seq_printf(sf, "nr_throttled %d\n", cfs_b->nr_throttled);
+		seq_printf(sf, "throttled_usec %llu\n",
+			   div_u64(cfs_b->throttled_time, NSEC_PER_USEC));
+	}
+#else
+	/*
+	 * Without CONFIG_CFS_BANDWIDTH there is no throttling state at all.
+	 * Report the fields anyway with zero values so the file keeps a stable
+	 * six-field shape, rather than omitting them.
+	 */
+	seq_printf(sf, "nr_periods 0\n");
+	seq_printf(sf, "nr_throttled 0\n");
+	seq_printf(sf, "throttled_usec 0\n");
+#endif
+
+	return 0;
+}
+
 static struct cftype cpu_dfl_files[] = {
 #ifdef CONFIG_CFS_BANDWIDTH
 	{
@@ -8923,7 +9040,7 @@ static struct cftype cpu_dfl_files[] = {
 #endif
 	{
 		.name = "stat",
-		.seq_show = cpu_stats_show,
+		.seq_show = cpu_dfl_stats_show,
 	},
 	{ }	/* Terminate */
 };

@@ -346,6 +346,11 @@ static struct cftype files[] = {
  *
  * called with rq->lock held.
  */
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+/* Defined below, next to its sibling task_group_account_cputime(). */
+static void task_group_account_usage(struct task_struct *tsk, u64 val);
+#endif
+
 void cpuacct_charge(struct task_struct *tsk, u64 cputime)
 {
 	struct cpuacct *ca;
@@ -361,13 +366,139 @@ void cpuacct_charge(struct task_struct *tsk, u64 cputime)
 		this_cpu_ptr(ca->cpuusage)->usages[index] += cputime;
 
 	rcu_read_unlock();
+
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+	/*
+	 * This is the scheduler runtime event, and it is the only source for
+	 * cpu.stat usage_usec. It is accounted separately from
+	 * cpuacct_account_field() (the tick/cputime split that feeds
+	 * user_usec/system_usec) on purpose: the two are different
+	 * measurements, so usage_usec is not synthesised as user + system.
+	 */
+	task_group_account_usage(tsk, cputime);
+#endif /* CONFIG_CGROUP_CPUACCT && CONFIG_CGROUP_SCHED */
 }
 
 /*
- * Add user/system time to cpuacct.
+ * Add user/system time to the cpu controller's per-group counters.
  *
- * Note: it's the caller that updates the account of the root cgroup.
+ * task_group(tsk) is the task's cpu controller task_group - the very
+ * task_group that backs the v2 hierarchy, because sched_change_group()
+ * derives sched_task_group from task_css_check(tsk, cpu_cgrp_id) rather than
+ * from a v1-only mapping. Charging along that chain gives real per-v2-cgroup
+ * numbers, and it is done here, at the single point where cputime.c already
+ * classifies the charge, so no additional accounting call site is introduced.
+ *
+ * The walk is bounded by the root task_group and runs under rcu_read_lock(),
+ * matching the lifetime rule sched_free_group() already relies on: a
+ * task_group stays valid for an RCU grace period after it is unlinked, so a
+ * charge racing with a group's removal either lands in the group or is
+ * dropped, never dereferences freed memory. Each task_group's counters are
+ * per-CPU, so concurrent charges on different CPUs need no lock; the reader
+ * sums them under rcu_read_lock() as well.
+ *
+ * This feeds user_usec/system_usec only. usage_usec is accumulated separately
+ * from cpuacct_charge(), the scheduler runtime event, because the runtime and
+ * the tick-based split are different measurements.
  */
+/*
+ * struct task_group and css_tg() only exist under CONFIG_CGROUP_SCHED, and the
+ * per-group counters only under CONFIG_CGROUP_CPUACCT, so every use of them
+ * here needs both. cpuacct.o is built from CONFIG_CGROUP_CPUACCT alone, hence
+ * the explicit pair rather than relying on an outer guard.
+ */
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+static void task_group_account_cputime(struct task_struct *tsk, int index, u64 val)
+{
+	struct task_group *tg;
+	bool user;
+
+	if (!val)
+		return;
+
+	/*
+	 * user/nice both count as user time; system/irq/softirq as system time.
+	 */
+	switch (index) {
+	case CPUTIME_USER:
+	case CPUTIME_NICE:
+		user = true;
+		break;
+	case CPUTIME_SYSTEM:
+	case CPUTIME_IRQ:
+	case CPUTIME_SOFTIRQ:
+		user = false;
+		break;
+	default:
+		return;
+	}
+
+	/*
+	 * Take one snapshot of sched_task_group rather than dereferencing the
+	 * task repeatedly: rcu_read_lock() below pins the task_group objects
+	 * against css_free(), which is what makes walking the parent chain safe,
+	 * but sched_task_group itself is an ordinary pointer that
+	 * sched_change_group() may update, so it is read once up front.
+	 */
+	rcu_read_lock();
+	tg = READ_ONCE(tsk->sched_task_group);
+	for (; tg; tg = tg->parent) {
+		if (!tg->cpustat)
+			break;
+
+		/*
+		 * __this_cpu_add() is given the __percpu member itself: it
+		 * expands to raw_cpu_ptr(&(pcp)), which is what performs the
+		 * current-CPU offset. Handing it an already-offset
+		 * this_cpu_ptr() result would offset twice. __this_cpu_* (as
+		 * opposed to this_cpu_*) also keeps the CONFIG_DEBUG_PREEMPT
+		 * check, which matters because these charges can come from
+		 * interrupt context.
+		 */
+		if (user)
+			__this_cpu_add(tg->cpustat->user_ns, val);
+		else
+			__this_cpu_add(tg->cpustat->sys_ns, val);
+
+		/* The root task_group has no parent; the walk ends there. */
+		if (!tg->parent)
+			break;
+	}
+	rcu_read_unlock();
+}
+
+/*
+ * Add scheduler runtime to the cpu controller's per-group usage counter.
+ *
+ * Same parent-chain walk and same RCU rule as
+ * task_group_account_cputime() above. Kept distinct from it because cpu.stat
+ * usage_usec is documented as total time, and deriving it as user+system
+ * would silently mix two different measurements (tick/cputime split versus
+ * scheduler runtime) that are not guaranteed to agree.
+ */
+static void task_group_account_usage(struct task_struct *tsk, u64 val)
+{
+	struct task_group *tg;
+
+	if (!val)
+		return;
+
+	/* Same snapshot-then-walk rule as task_group_account_cputime(). */
+	rcu_read_lock();
+	tg = READ_ONCE(tsk->sched_task_group);
+	for (; tg; tg = tg->parent) {
+		if (!tg->cpustat)
+			break;
+
+		__this_cpu_add(tg->cpustat->usage_ns, val);
+
+		if (!tg->parent)
+			break;
+	}
+	rcu_read_unlock();
+}
+#endif /* CONFIG_CGROUP_CPUACCT && CONFIG_CGROUP_SCHED */
+
 void cpuacct_account_field(struct task_struct *tsk, int index, u64 val)
 {
 	struct cpuacct *ca;
@@ -376,6 +507,63 @@ void cpuacct_account_field(struct task_struct *tsk, int index, u64 val)
 	for (ca = task_ca(tsk); ca != &root_cpuacct; ca = parent_ca(ca))
 		this_cpu_ptr(ca->cpustat)->cpustat[index] += val;
 	rcu_read_unlock();
+
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+	task_group_account_cputime(tsk, index, val);
+#endif
+}
+
+/*
+ * Read the per-task_group CPU time counters, in nanoseconds.
+ *
+ * Used by kernel/sched/core.c to fill the v2 cpu.stat usage fields. The
+ * counters are charged to a group and to every ancestor, so a parent already
+ * includes its children; that is exactly what the cgroup v2 cpu.stat
+ * usage_usec is defined to report (it accounts for the processes in the
+ * cgroup *and* its descendants), so no child subtraction is needed.
+ */
+void cpuacct_get_task_group_usage(struct cgroup_subsys_state *css,
+				  u64 *usage_ns, u64 *user_ns, u64 *sys_ns)
+{
+#if defined(CONFIG_CGROUP_CPUACCT) && defined(CONFIG_CGROUP_SCHED)
+	/*
+	 * css must be the css of the cpu controller: that is the only one whose
+	 * owning struct is a task_group, and it is what the cpu cftypes hand to
+	 * seq_css(). css_tg() lives in sched.h for exactly this purpose.
+	 */
+	struct task_group *tg = css_tg(css);
+	u64 usage = 0, user = 0, sys = 0;
+	int cpu;
+
+	if (!tg || !tg->cpustat) {
+		*usage_ns = 0;
+		*user_ns = 0;
+		*sys_ns = 0;
+		return;
+	}
+
+	rcu_read_lock();
+	for_each_possible_cpu(cpu) {
+		struct task_group_cputat *cputat = per_cpu_ptr(tg->cpustat, cpu);
+
+		usage += cputat->usage_ns;
+		user += cputat->user_ns;
+		sys += cputat->sys_ns;
+	}
+	rcu_read_unlock();
+
+	*usage_ns = usage;
+	*user_ns = user;
+	*sys_ns = sys;
+#else
+	/*
+	 * Without both CONFIG_CGROUP_CPUACCT and CONFIG_CGROUP_SCHED there is
+	 * no task_group (and no counters on it) to read.
+	 */
+	*usage_ns = 0;
+	*user_ns = 0;
+	*sys_ns = 0;
+#endif
 }
 
 struct cgroup_subsys cpuacct_cgrp_subsys = {

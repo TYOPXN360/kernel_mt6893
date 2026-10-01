@@ -103,6 +103,8 @@ struct scan_control {
 
 	/* Can pages be swapped as part of reclaim? */
 	unsigned int may_swap:1;
+	/* Swappiness override for proactive reclaim; always use sc_swappiness(). */
+	int *proactive_swappiness;
 
 	/*
 	 * Cgroups are not reclaimed below their configured memory.low,
@@ -2342,11 +2344,19 @@ enum scan_balance {
  * nr[0] = anon inactive pages to scan; nr[1] = anon active pages to scan
  * nr[2] = file inactive pages to scan; nr[3] = file active pages to scan
  */
+static int sc_swappiness(struct scan_control *sc, struct mem_cgroup *memcg)
+{
+	if (sc->proactive_swappiness)
+		return *sc->proactive_swappiness;
+
+	return mem_cgroup_swappiness(memcg);
+}
+
 static void get_scan_count(struct lruvec *lruvec, struct mem_cgroup *memcg,
 			   struct scan_control *sc, unsigned long *nr,
 			   unsigned long *lru_pages)
 {
-	int swappiness = mem_cgroup_swappiness(memcg);
+	int swappiness = sc_swappiness(sc, memcg);
 	struct zone_reclaim_stat *reclaim_stat = &lruvec->reclaim_stat;
 	u64 fraction[ANON_AND_FILE];
 	u64 denominator = 0;	/* gcc */
@@ -2611,7 +2621,7 @@ static int get_swappiness(struct lruvec *lruvec, struct scan_control *sc)
 	if (mem_cgroup_get_nr_swap_pages(memcg) <= 0)
 		return 0;
 
-	return mem_cgroup_swappiness(memcg);
+	return sc_swappiness(sc, memcg);
 }
 
 static int get_nr_gens(struct lruvec *lruvec, int type)
@@ -6074,7 +6084,8 @@ unsigned long mem_cgroup_shrink_node(struct mem_cgroup *memcg,
 unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 					   unsigned long nr_pages,
 					   gfp_t gfp_mask,
-					   bool may_swap)
+					   bool may_swap,
+					   int *swappiness)
 {
 	struct zonelist *zonelist;
 	unsigned long nr_reclaimed;
@@ -6091,6 +6102,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 		.may_writepage = !laptop_mode,
 		.may_unmap = 1,
 		.may_swap = may_swap,
+		.proactive_swappiness = swappiness,
 	};
 
 	/*
@@ -6119,6 +6131,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 
 	return nr_reclaimed;
 }
+
 #endif
 
 static void kswapd_age_node(struct pglist_data *pgdat, struct scan_control *sc)

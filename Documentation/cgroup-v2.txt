@@ -1011,6 +1011,15 @@ PAGE_SIZE multiple when read back.
 	The total amount of memory currently being used by the cgroup
 	and its descendants.
 
+  memory.reclaim
+	A write-only file which exists on non-root cgroups.  Writing a
+	byte count requests targeted reclaim from the cgroup and its
+	descendants.  The optional nested key "swappiness=N" with
+	0 <= N <= 200 overrides the configured swappiness for that
+	operation, with the same semantics as vm.swappiness.  Reclaim may
+	over- or under-reclaim; if the requested amount cannot be reclaimed,
+	the write returns -EAGAIN.  Reclaim operates at page granularity.
+
   memory.low
 	A read-write single value file which exists on non-root
 	cgroups.  The default is "0".
