@@ -1985,7 +1985,7 @@ static struct cftype files[] = {
  */
 static struct cftype cpuset_dfl_cftypes[] = {
 	{
-		.name = "cpuset.cpus",
+		.name = "cpus",
 		.seq_show = cpuset_common_seq_show,
 		.write = cpuset_write_resmask,
 		.max_write_len = (100U + 6 * NR_CPUS),
@@ -1993,7 +1993,7 @@ static struct cftype cpuset_dfl_cftypes[] = {
 	},
 
 	{
-		.name = "cpuset.mems",
+		.name = "mems",
 		.seq_show = cpuset_common_seq_show,
 		.write = cpuset_write_resmask,
 		.max_write_len = (100U + 6 * MAX_NUMNODES),
@@ -2001,13 +2001,13 @@ static struct cftype cpuset_dfl_cftypes[] = {
 	},
 
 	{
-		.name = "cpuset.effective_cpus",
+		.name = "effective_cpus",
 		.seq_show = cpuset_common_seq_show,
 		.private = FILE_EFFECTIVE_CPULIST,
 	},
 
 	{
-		.name = "cpuset.effective_mems",
+		.name = "effective_mems",
 		.seq_show = cpuset_common_seq_show,
 		.private = FILE_EFFECTIVE_MEMLIST,
 	},

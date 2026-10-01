@@ -8869,18 +8869,18 @@ static ssize_t cpu_dfl_max_write(struct kernfs_open_file *of, char *buf,
 static struct cftype cpu_dfl_files[] = {
 #ifdef CONFIG_CFS_BANDWIDTH
 	{
-		.name = "cpu.max",
+		.name = "max",
 		.seq_show = cpu_dfl_max_show,
 		.write = cpu_dfl_max_write,
 	},
 #endif
 	{
-		.name = "cpu.weight",
+		.name = "weight",
 		.read_u64 = cpu_shares_read_u64,
 		.write_u64 = cpu_shares_write_u64,
 	},
 	{
-		.name = "cpu.stat",
+		.name = "stat",
 		.seq_show = cpu_stats_show,
 	},
 	{ }	/* Terminate */
