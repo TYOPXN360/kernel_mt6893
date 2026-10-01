@@ -11,6 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/sched.h>
+#include <linux/sched/task.h>
 #include <linux/version.h>
 #include <linux/uaccess.h>
 #include <linux/string.h>
