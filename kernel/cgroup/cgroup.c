@@ -3167,18 +3167,12 @@ static void cgroup_enable_dfl_controllers(void)
 			continue;
 
 		/*
-		 * cpuset is excluded for now. With cpuset in the root's
-		 * subtree_control, cgroup v2 requires every child cgroup to
-		 * carry a non-empty cpuset.cpus and cpuset.mems before it may
-		 * accept processes - and cgroups created by libprocessgroup do
-		 * not have those files, so every write to their cgroup.procs
-		 * fails with EPERM. Enabling it here would lock processes out
-		 * of their own groups. The cgroup v2 rules that would need to
-		 * initialise a child's cpuset on creation are not implemented
-		 * in this tree, so cpuset has to be enabled from userspace
-		 * (cgroups.json) once that side is in place.
+		 * cpuset needs every child cgroup to carry a non-empty
+		 * cpuset.cpus and cpuset.mems before it may accept processes.
+		 * cpuset_css_online() seeds those from the parent, so the
+		 * per-uid groups libprocessgroup creates are usable.
 		 */
-		if (!strcmp(ss->name, "cpuset"))
+		if (!strcmp(ss->name, "cpuset") && !root->dfl_cgrp->kn)
 			continue;
 
 		enable |= 1u << ssid;

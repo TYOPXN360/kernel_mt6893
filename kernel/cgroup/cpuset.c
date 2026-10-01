@@ -2080,6 +2080,17 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
 
 	spin_lock_irq(&callback_lock);
 	if (is_in_v2_mode()) {
+		/*
+		 * cgroup v2 validates a cgroup's *configured* cpus and mems
+		 * (cs->cpus / cs->mems) before letting it take tasks, and
+		 * inherits only the effective values. Copying just the
+		 * effective masks left every newly created child with an empty
+		 * cpuset.cpus, so once cpuset was enabled in the parent's
+		 * subtree_control every write to the child's cgroup.procs was
+		 * rejected. Seed the configuration from the parent as well.
+		 */
+		cpumask_copy(cs->cpus, parent->cpus);
+		cs->mems = parent->mems;
 		cpumask_copy(cs->effective_cpus, parent->effective_cpus);
 		cs->effective_mems = parent->effective_mems;
 	}
