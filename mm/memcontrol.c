@@ -5387,7 +5387,7 @@ static ssize_t memory_max_write(struct kernfs_open_file *of,
 
 		if (nr_reclaims) {
 			if (!try_to_free_mem_cgroup_pages(memcg, nr_pages - max,
-							  GFP_KERNEL, true))
+							  GFP_KERNEL, true, NULL))
 				nr_reclaims--;
 			continue;
 		}
