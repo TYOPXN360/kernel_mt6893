@@ -42,6 +42,9 @@
 
 #ifdef CONFIG_MI_ESD_CHECK
 #define ESD_CHECK_IRQ_PERIOD 10 /* ms */
+#if defined(CONFIG_DRM_PANEL_K10A_36_02_0A_DSC_VDO) || defined(CONFIG_DRM_PANEL_K10A_42_02_0B_DSC_VDO)
+static irqreturn_t _mi_esd_check_ext_te_irq_handler(int irq, void *data);
+#endif
 #endif
 
 /* pinctrl implementation */
