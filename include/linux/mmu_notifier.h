@@ -17,6 +17,14 @@ struct mmu_notifier_ops;
 
 #ifdef CONFIG_MMU_NOTIFIER
 
+/* Event carried by mmu_notifier_range_init(). The range helpers drop it
+ * (see mmu_notifier_range_init below), it only exists so the upstream
+ * call sites that pass MMU_NOTIFY_UNMAP keep compiling.
+ */
+enum mmu_notifier_event {
+	MMU_NOTIFY_UNMAP,
+};
+
 /*
  * The mmu notifier_mm structure is allocated and installed in
  * mm->mmu_notifier_mm inside the mm_take_all_locks() protected

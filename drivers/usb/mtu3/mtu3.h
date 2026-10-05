@@ -327,9 +327,8 @@ struct ssusb_mtk {
 	/* u2 cdp */
 	struct work_struct dp_work;
 	struct charger_device *chg_dev;
-#ifdef CONFIG_AGATE_CHARGER
+	/* 5V/OTG charger, referenced unconditionally by mtu3_dr.c */
 	struct charger_device *chg5_dev;
-#endif
 };
 
 /**

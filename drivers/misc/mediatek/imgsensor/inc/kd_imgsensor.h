@@ -616,6 +616,16 @@
 #define AGATEIMX355_SENSOR_ID                    0x355
 #define SENSOR_DRVNAME_AGATEIMX355_MIPI_RAW      "agateimx355_mipi_raw"
 
+//Chopin (mt6893/cg) sensors
+#define OV64B40SUNNY_SENSOR_ID                   0x6442
+#define SENSOR_DRVNAME_OV64B40SUNNY_MIPI_RAW     "ov64b40sunny_mipi_raw"
+#define OV16A1QOFILM_SENSOR_ID                   0x1641
+#define SENSOR_DRVNAME_OV16A1QOFILM_MIPI_RAW     "ov16a1qofilm_mipi_raw"
+#define GC02M1SUNNY_SENSOR_ID                    0x2e0
+#define SENSOR_DRVNAME_GC02M1SUNNY_MIPI_RAW      "gc02m1sunny_mipi_raw"
+#define IMX355SUNNY_SENSOR_ID                    0x355
+#define SENSOR_DRVNAME_IMX355SUNNY_MIPI_RAW      "imx355sunny_mipi_raw"
+
 /******************************************************************************
  *
  ******************************************************************************/
