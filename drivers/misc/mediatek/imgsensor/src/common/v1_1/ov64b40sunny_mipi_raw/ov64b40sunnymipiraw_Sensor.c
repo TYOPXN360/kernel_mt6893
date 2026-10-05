@@ -182,7 +182,9 @@ static struct imgsensor_info_struct imgsensor_info = {
 	.min_shutter = 8,		//min shutter
 	.exp_step    = 2,
 	.min_gain = BASEGAIN, // 1x gain
-	.max_gain = 15.5 * BASEGAIN, // real again is 15.5x
+	/* kernel builds with -mgeneral-regs-only, no soft-float runtime:
+	 * keep the gain constants integer (15.5 * BASEGAIN == 992 exactly). */
+	.max_gain = 992, // real again is 15.5x
 	.min_gain_iso = 50,
 	.gain_step = 1,
 	.gain_type = 1,
@@ -557,20 +559,36 @@ static void set_shutter_frame_length(kal_uint16 shutter,
 		shutter, imgsensor.frame_length);
 }
 
-#define FACTOR 992.0f//(15.5f　* 64.0f)
+#define FACTOR 992U/*(15.5f　* 64.0f)*/
+#define DGAIN_MAX_X1024 16373U	/*(u32)(15.99f * 1024) == 16373.76 -> 16373*/
+
 static kal_uint32 digital_gain_calc(kal_uint16 aaa_gain)
 {
-	float real_dig_gain = 1.0f;//MIN Dgain
-	kal_uint32 reg_dig_gain = 1024;//1024 = 1x
+	/*
+	 * Integer rewrite of the former float version. The kernel builds with
+	 * -mgeneral-regs-only and has no soft-float runtime, so any float op
+	 * here would emit __divsf3/__mulsf3/__fixunssfsi libcalls.
+	 *
+	 *   real_dig_gain = aaa_gain / 992.0f        (float)
+	 *   clamp to 15.99f
+	 *   (u32)(real_dig_gain * 1024) << 6
+	 *
+	 * Scaling by 1024 first and doing one integer division is exact
+	 * truncation-equivalent: floor((a/g)*1024) == floor(a*1024/g).
+	 * aaa_gain is u16, so aaa_gain * 1024 <= 67107840 and cannot overflow
+	 * kal_uint32. The clamp is applied on the x1024 scale: g <= 15.99
+	 * implies floor(g*1024) <= floor(15.99*1024) = 16373, so clamping the
+	 * scaled value to 16373 reproduces the original clamp exactly.
+	 */
+	kal_uint32 real_dig_gain_x1024 = 1024;	/*1024 = 1x*/
+	kal_uint32 reg_dig_gain;
 
-	real_dig_gain = aaa_gain / FACTOR;
+	real_dig_gain_x1024 = ((kal_uint32)aaa_gain * 1024U) / FACTOR;
 
-	if (real_dig_gain > 15.99f)//Max digital gain
-	{
-		real_dig_gain = 15.99f;
-	}
+	if (real_dig_gain_x1024 > DGAIN_MAX_X1024)	/*Max digital gain 15.99x*/
+		real_dig_gain_x1024 = DGAIN_MAX_X1024;
 
-	reg_dig_gain = (kal_uint32)(real_dig_gain * 1024) << 6;
+	reg_dig_gain = real_dig_gain_x1024 << 6;
 
 	return reg_dig_gain;
 }
