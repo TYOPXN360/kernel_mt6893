@@ -419,6 +419,15 @@ static int gpio_init(struct gamekey_core *core)
 {
 	int ret = 0;
 	struct hw_info *hw = &core->hw;
+	int i;
+
+	for (i = 0; i < GPIO_MAX; i++) {
+		if (!gpio_is_valid(hw->gpio_info[i].gpio)) {
+			pr_info("skip gamekey: invalid %s gpio %d\n",
+				hw->gpio_info[i].label, hw->gpio_info[i].gpio);
+			return -ENODEV;
+		}
+	}
 
 	ret = gpio_request_array(hw->gpio_info, GPIO_MAX);
 	if (ret) {
@@ -602,7 +611,11 @@ static int __init gamekey_probe(struct platform_device *pdev)
 	ret = gpio_init(core);
 	if (ret) {
 		pr_err("gpio init failed, exiting probe...");
-		goto gpio_err;
+		input_unregister_device(core->input_dev);
+		core->input_dev = NULL;
+		g_core = NULL;
+		kfree(core);
+		return ret;
 	}
 
 	ret = irq_init(core);
