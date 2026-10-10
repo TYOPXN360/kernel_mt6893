@@ -125,35 +125,29 @@ pe_header:
 
 ENTRY(stext)
 	bl	preserve_boot_args
-	/*
-	 * Diagnostic probe A. Write straight into ramoops instead of issuing
-	 * an SMC. GenieZone silently drops unregistered SMC function ids, so
-	 * an SMC probe proved nothing; LK does export ramoops verbatim as
-	 * "kedump add: SYS_PSTORE_RAW", which does come back in expdb.
-	 *
-	 * The MMU is still off here (it is only enabled in
-	 * __primary_switch), so the store reaches DRAM directly. 0x48090000
-	 * is inside /memory as the DTB declares it. x0-x3 were spilled to
-	 * boot_args by the instruction above, so clobbering them is safe.
-	 */
-	movz	x2, #0x0800		// 0x48090800, low half
-	movk	x2, #0x4809, lsl #16	// 0x48090800, high half
-	movz	x3, #0x4b43		// magic low  (0x44424b43)
+	movz	x2, #0x0800		// addr low
+	movk	x2, #0x4809, lsl #16	// 0x48090800
+	movz	x3, #0x4b41		// magic low
 	movk	x3, #0x4442, lsl #16	// magic high
 	str	x3, [x2]
-	movz	x3, #0x0001		// stage 1, seq 1
-	str	x3, [x2, #4]
-	movz	x3, #0x0001		// reached = stage 1
-	str	x3, [x2, #8]
-	str	xzr, [x2, #12]
-	mov	x3, sp
-	str	x3, [x2, #16]
-	/* end probe A: head.S reached --- */
+	/* probe 1: stext entry --- */
 	bl	el2_setup			// Drop to EL1, w0=cpu_boot_mode
+	movz	x2, #0x0810		// addr low
+	movk	x2, #0x4809, lsl #16	// 0x48090810
+	movz	x3, #0x4b42		// magic low
+	movk	x3, #0x4442, lsl #16	// magic high
+	str	x3, [x2]
+	/* probe 2: el2_setup done, at EL1 --- */
 	adrp	x23, __PHYS_OFFSET
 	and	x23, x23, MIN_KIMG_ALIGN - 1	// KASLR offset, defaults to 0
 	bl	set_cpu_boot_mode_flag
 	bl	__create_page_tables
+	movz	x2, #0x0820		// addr low
+	movk	x2, #0x4809, lsl #16	// 0x48090820
+	movz	x3, #0x4b43		// magic low
+	movk	x3, #0x4442, lsl #16	// magic high
+	str	x3, [x2]
+	/* probe 3: page tables built --- */
 	/*
 	 * The following calls CPU setup code, see arch/arm64/mm/proc.S for
 	 * details.
@@ -161,16 +155,18 @@ ENTRY(stext)
 	 * the TCR will have been set.
 	 */
 	bl	__cpu_setup			// initialise processor
-	/* probe B: page tables built, CPU configured, still pre-MMU */
-	movz	x2, #0x0800		// 0x48090800, low half
-	movk	x2, #0x4809, lsl #16	// 0x48090800, high half
-	movz	x3, #0x0002		// stage 2, seq 2
-	str	x3, [x2, #4]
-	movz	x3, #0x0002		// reached = stage 2
-	str	x3, [x2, #8]
-	str	xzr, [x2, #12]
-	mov	x3, sp
-	str	x3, [x2, #16]
+	movz	x2, #0x0830		// addr low
+	movk	x2, #0x4809, lsl #16	// 0x48090830
+	movz	x3, #0x4b44		// magic low
+	movk	x3, #0x4442, lsl #16	// magic high
+	str	x3, [x2]
+	/* probe 4: CPU configured, pre-MMU --- */
+	movz	x2, #0x0840		// addr low
+	movk	x2, #0x4809, lsl #16	// 0x48090840
+	movz	x3, #0x4b45		// magic low
+	movk	x3, #0x4442, lsl #16	// magic high
+	str	x3, [x2]
+	/* probe 5: about to enable MMU --- */
 	b	__primary_switch
 ENDPROC(stext)
 
