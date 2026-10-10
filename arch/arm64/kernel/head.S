@@ -836,16 +836,44 @@ ENTRY(__enable_mmu)
 	ubfx	x2, x1, #ID_AA64MMFR0_TGRAN_SHIFT, 4
 	cmp	x2, #ID_AA64MMFR0_TGRAN_SUPPORTED
 	b.ne	__no_granule_support
+	movz	x5, #0x08e0
+	movk	x5, #0x4809, lsl #16
+	mov	x6, #0x4b4e
+	movk	x6, #0x4442, lsl #16
+	str	x6, [x5]
+	dsb	sy
+	/* probe 17: MMU enabled --- */
+	/* probe 16: ttbr computed, MMU still off --- */
+	/* probe 15: early boot status recorded --- */
+	/* probe 14: TGRAN ok, MMU still off --- */
 	update_early_cpu_boot_status 0, x1, x2
+	movz	x5, #0x08f0
+	movk	x5, #0x4809, lsl #16
+	mov	x6, #0x4b4f
+	movk	x6, #0x4442, lsl #16
+	str	x6, [x5]
+	dsb	sy
 	adrp	x1, idmap_pg_dir
 	adrp	x2, swapper_pg_dir
 	phys_to_ttbr x3, x1
 	phys_to_ttbr x4, x2
+	movz	x5, #0x0900
+	movk	x5, #0x4809, lsl #16
+	mov	x6, #0x4b50
+	movk	x6, #0x4442, lsl #16
+	str	x6, [x5]
+	dsb	sy
 	msr	ttbr0_el1, x3			// load TTBR0
 	msr	ttbr1_el1, x4			// load TTBR1
 	isb
 	msr	sctlr_el1, x0
 	isb
+	movz	x5, #0x0910
+	movk	x5, #0x4809, lsl #16
+	mov	x6, #0x4b51
+	movk	x6, #0x4442, lsl #16
+	str	x6, [x5]
+	dsb	sy
 	/*
 	 * Invalidate the local I-cache so that any instructions fetched
 	 * speculatively from the PoC are discarded, since they may have
