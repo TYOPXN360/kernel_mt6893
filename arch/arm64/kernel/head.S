@@ -118,6 +118,15 @@ pe_header:
 	 */
 ENTRY(stext)
 	bl	preserve_boot_args
+	/*
+	 * Diagnostic probe A. GenieZone traces every SMC it takes and its
+	 * memlog lands in expdb, which outlives LK restarts. x0-x3 were
+	 * already spilled to boot_args above, so clobbering them is safe.
+	 */
+	mov	x2, #0xd00
+	mov	x3, #0x0aad
+	smc	#0
+	/* end probe A: head.S reached --- */
 	bl	el2_setup			// Drop to EL1, w0=cpu_boot_mode
 	adrp	x23, __PHYS_OFFSET
 	and	x23, x23, MIN_KIMG_ALIGN - 1	// KASLR offset, defaults to 0
@@ -130,6 +139,10 @@ ENTRY(stext)
 	 * the TCR will have been set.
 	 */
 	bl	__cpu_setup			// initialise processor
+	/* probe B: page tables built, CPU configured, still pre-MMU */
+	mov	x2, #0xd01
+	mov	x3, #0x0bee
+	smc	#0
 	b	__primary_switch
 ENDPROC(stext)
 
