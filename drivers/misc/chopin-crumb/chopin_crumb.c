@@ -6,17 +6,17 @@
  * GenieZone hands the 4.19 kernel control with "boot linux-64 via EL2"
  * and then nothing else is observable. LK appends
  * mtk_printk_ctrl.disable_uart=1 to the command line after whatever the
- * boot image supplies, this tree has no minirdump driver so oops stays
- * empty, and pstore/ramoops lands in RAM that nothing can read back.
+ * boot image supplies, and this tree has no minirdump driver so the oops
+ * partition stays empty even on panic.
  * GenieZone only logs registered TA service calls, so a bare SMC from
  * head.S is dropped silently as well.
  *
- * What does survive is LK's log_store. LK maps the expdb partition at
- * 0x7ffbf000 in DRAM and copies the leading ~127KB of that buffer back
- * into the expdb partition on every boot, so anything the kernel leaves
- * inside it comes back out on the next start. The working 4.14 kernel
- * reports MemTotal 5598444 kB while the DTB only declares 998 MB, which
- * proves LK widens /memory before the jump, so 0x7ffbf000 is mappable.
+ * What does survive is ramoops. LK exports it verbatim into the expdb
+ * partition on every boot, visible as
+ *   kedump add: SYS_PSTORE_RAW[1] e0000/e0000@2800
+ * so anything the kernel leaves in that RAM comes back out on the next
+ * start. A first attempt wrote to LK's own log_store buffer at 0x7ffbf000
+ * instead and produced nothing, which is what this rewrite fixes.
  *
  * Each stage is a 16-byte record. The whole table is written at every
  * stage rather than appended, so a later stage overwriting an earlier
@@ -29,10 +29,24 @@
 #include <linux/slab.h>
 
 #define CRUMB_MAGIC		0x44424b43u	/* "CBKD" */
-#define CRUMB_LOG_STORE		0x7ffbf000UL
-#define CRUMB_LEN		0x40000UL
-/* Stay well inside the ~127KB LK actually copies back. */
-#define CRUMB_TABLE		(CRUMB_LOG_STORE + 0x1000UL)
+/*
+ * ramoops. LK exports it verbatim into the expdb partition as
+ * "kedump add: SYS_PSTORE_RAW", which is a far better channel than LK's
+ * own log_store buffer: 0x48090000 sits inside /memory as declared by
+ * the DTB, so memremap() cannot refuse it, and the export does not depend
+ * on how much of log_store LK happens to copy back.
+ *
+ * From the running 4.14 kernel:
+ *   ramoops.mem_address=0x48090000  ramoops.mem_size=0xe0000
+ *
+ * MTK carves the first 0x800 bytes into a partition table
+ * (SYS_RAMCONSOLE / SYS_SSPM / SYS_MCUP / ZAAE_LOG, seen in expdb), so
+ * start past that. console_size is 0x40000 and pmsg_size 0x10000, both
+ * also inside this range, so stay in the gap below them.
+ */
+#define CRUMB_RAMOOPS		0x48090000UL
+#define CRUMB_LEN		0x1000UL
+#define CRUMB_TABLE		(CRUMB_RAMOOPS + 0x800UL)
 #define CRUMB_MAX		32
 
 #define STAGE_START_KERNEL	1
@@ -64,9 +78,11 @@ void __init chopin_crumb_init(void)
 		return;
 
 	/*
-	 * MEMREMAP_WB gives a cached writable mapping. If the address is
-	 * not system memory this returns NULL and every later stage just
-	 * records "no breadcrumb" rather than faulting.
+	 * MEMREMAP_WB gives a cached writable mapping. ramoops is ordinary
+	 * RAM inside /memory, so this should always succeed; if it does
+	 * not, every later stage records "no breadcrumb" rather than
+	 * faulting, since a fault here would hide the failure we are
+	 * trying to observe.
 	 */
 	p = memremap(CRUMB_TABLE, CRUMB_LEN, MEMREMAP_WB);
 	if (!p)
