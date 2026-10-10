@@ -24,8 +24,7 @@
 #define __KREE_SYSTEM_H__
 
 #if IS_ENABLED(CONFIG_MTK_IN_HOUSE_TEE_SUPPORT)	\
-	|| IS_ENABLED(CONFIG_MTK_ENABLE_GENIEZONE)	\
-	|| IS_ENABLED(CONFIG_MTK_GZ_KREE)
+	|| IS_ENABLED(CONFIG_MTK_ENABLE_GENIEZONE)
 
 #include <tz_cross/trustzone.h>
 #include <gz-trusty/trusty.h>
@@ -128,5 +127,5 @@ u32 KREE_GetSystemCntFrq(void);
  */
 TZ_RESULT KREE_SessionToTID(KREE_SESSION_HANDLE session, enum tee_id_t *o_tid);
 
-#endif /* CONFIG_MTK_IN_HOUSE_TEE_SUPPORT || CONFIG_MTK_ENABLE_GENIEZONE || CONFIG_MTK_GZ_KREE */
+#endif /* CONFIG_MTK_IN_HOUSE_TEE_SUPPORT || CONFIG_MTK_ENABLE_GENIEZONE */
 #endif /* __KREE_H__ */

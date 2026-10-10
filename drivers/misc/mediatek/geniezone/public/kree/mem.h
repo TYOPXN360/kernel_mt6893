@@ -25,8 +25,7 @@
 #define __KREE_MEM_H__
 
 #if IS_ENABLED(CONFIG_MTK_IN_HOUSE_TEE_SUPPORT)	\
-	|| IS_ENABLED(CONFIG_MTK_ENABLE_GENIEZONE)	\
-	|| IS_ENABLED(CONFIG_MTK_GZ_KREE)
+	|| IS_ENABLED(CONFIG_MTK_ENABLE_GENIEZONE)
 
 #include <tz_cross/trustzone.h>
 #include <tz_cross/gz_version.h>
@@ -348,5 +347,5 @@ TZ_RESULT KREE_ConfigSecureMultiChunkMemInfo(KREE_SESSION_HANDLE session,
 					     uint64_t pa, uint32_t size,
 					     uint32_t region_id);
 
-#endif /* CONFIG_MTK_IN_HOUSE_TEE_SUPPORT || CONFIG_MTK_ENABLE_GENIEZONE || CONFIG_MTK_GZ_KREE */
+#endif /* CONFIG_MTK_IN_HOUSE_TEE_SUPPORT || CONFIG_MTK_ENABLE_GENIEZONE*/
 #endif /* __KREE_MEM_H__ */
