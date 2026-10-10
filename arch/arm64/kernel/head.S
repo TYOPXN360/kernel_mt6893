@@ -138,12 +138,12 @@ ENTRY(stext)
 	 */
 	movz	x2, #0x0800		// 0x48090800, low half
 	movk	x2, #0x4809, lsl #16	// 0x48090800, high half
-	mov	x3, #0x4b43		// magic low  (0x44424b43)
+	movz	x3, #0x4b43		// magic low  (0x44424b43)
 	movk	x3, #0x4442, lsl #16	// magic high
 	str	x3, [x2]
-	mov	x3, #0x00a00001		// stage 1, seq 1
+	movz	x3, #0x0001		// stage 1, seq 1
 	str	x3, [x2, #4]
-	mov	x3, #0x00a00001		// reached = stage 1
+	movz	x3, #0x0001		// reached = stage 1
 	str	x3, [x2, #8]
 	str	xzr, [x2, #12]
 	mov	x3, sp
@@ -164,9 +164,9 @@ ENTRY(stext)
 	/* probe B: page tables built, CPU configured, still pre-MMU */
 	movz	x2, #0x0800		// 0x48090800, low half
 	movk	x2, #0x4809, lsl #16	// 0x48090800, high half
-	mov	x3, #0x00b00002		// stage 2, seq 2
+	movz	x3, #0x0002		// stage 2, seq 2
 	str	x3, [x2, #4]
-	mov	x3, #0x00b00002		// reached = stage 2
+	movz	x3, #0x0002		// reached = stage 2
 	str	x3, [x2, #8]
 	str	xzr, [x2, #12]
 	mov	x3, sp
