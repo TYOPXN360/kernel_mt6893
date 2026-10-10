@@ -43,10 +43,14 @@
  * (SYS_RAMCONSOLE / SYS_SSPM / SYS_MCUP / ZAAE_LOG, seen in expdb), so
  * start past that. console_size is 0x40000 and pmsg_size 0x10000, both
  * also inside this range, so stay in the gap below them.
+ *
+ * The C-side table sits at +0x8a0. head.S writes its own single-word
+ * probes at +0x800 through +0x880 and they must not overlap, otherwise
+ * reaching start_kernel would erase the record of having got there.
  */
 #define CRUMB_RAMOOPS		0x48090000UL
 #define CRUMB_LEN		0x1000UL
-#define CRUMB_TABLE		(CRUMB_RAMOOPS + 0x800UL)
+#define CRUMB_TABLE		(CRUMB_RAMOOPS + 0x8a0UL)
 #define CRUMB_MAX		32
 
 #define STAGE_START_KERNEL	1

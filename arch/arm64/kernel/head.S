@@ -450,6 +450,10 @@ __primary_switched:
 	add	sp, x4, #THREAD_SIZE
 	adr_l	x5, init_task
 	msr	sp_el0, x5			// Save thread_info
+	mov_q	x2, PAGE_OFFSET + 0x48090850
+	mov	x3, #0x4b46
+	str	x3, [x2]
+	/* probe 6: primary_switched entered, MMU on --- */
 
 	adr_l	x8, vectors			// load VBAR_EL1 with virtual
 	msr	vbar_el1, x8			// vector table address
@@ -474,6 +478,10 @@ __primary_switched:
 	adr_l	x2, __bss_stop
 	sub	x2, x2, x0
 	bl	__pi_memset
+	mov_q	x2, PAGE_OFFSET + 0x48090860
+	mov	x3, #0x4b47
+	str	x3, [x2]
+	/* probe 7: BSS cleared --- */
 	dsb	ishst				// Make zero page visible to PTW
 
 #ifdef CONFIG_KASAN
@@ -490,9 +498,17 @@ __primary_switched:
 	ret					// to __primary_switch()
 0:
 #endif
+	mov_q	x2, PAGE_OFFSET + 0x48090870
+	mov	x3, #0x4b48
+	str	x3, [x2]
+	/* probe 8: KASLR decided --- */
 	add	sp, sp, #16
 	mov	x29, #0
 	mov	x30, #0
+	mov_q	x2, PAGE_OFFSET + 0x48090880
+	mov	x3, #0x4b49
+	str	x3, [x2]
+	/* probe 9: about to call start_kernel --- */
 	b	start_kernel
 ENDPROC(__primary_switched)
 
