@@ -116,16 +116,38 @@ pe_header:
 	 *  x24        __primary_switch() .. relocate_kernel()
 	 *                                        current RELR displacement
 	 */
+/*
+ * The breadcrumb target below is 0x48090800, hardcoded as movz/movk
+ * because head.S cannot include the C header. It must match
+ * CRUMB_RAMOOPS + 0x800 in drivers/misc/chopin-crumb/chopin_crumb.c,
+ * which picks up from wherever this left off.
+ */
+
 ENTRY(stext)
 	bl	preserve_boot_args
 	/*
-	 * Diagnostic probe A. GenieZone traces every SMC it takes and its
-	 * memlog lands in expdb, which outlives LK restarts. x0-x3 were
-	 * already spilled to boot_args above, so clobbering them is safe.
+	 * Diagnostic probe A. Write straight into ramoops instead of issuing
+	 * an SMC. GenieZone silently drops unregistered SMC function ids, so
+	 * an SMC probe proved nothing; LK does export ramoops verbatim as
+	 * "kedump add: SYS_PSTORE_RAW", which does come back in expdb.
+	 *
+	 * The MMU is still off here (it is only enabled in
+	 * __primary_switch), so the store reaches DRAM directly. 0x48090000
+	 * is inside /memory as the DTB declares it. x0-x3 were spilled to
+	 * boot_args by the instruction above, so clobbering them is safe.
 	 */
-	mov	x2, #0xd00
-	mov	x3, #0x0aad
-	smc	#0
+	movz	x2, #0x0800		// 0x48090800, low half
+	movk	x2, #0x4809, lsl #16	// 0x48090800, high half
+	mov	x3, #0x4b43		// magic low  (0x44424b43)
+	movk	x3, #0x4442, lsl #16	// magic high
+	str	x3, [x2]
+	mov	x3, #0x00a00001		// stage 1, seq 1
+	str	x3, [x2, #4]
+	mov	x3, #0x00a00001		// reached = stage 1
+	str	x3, [x2, #8]
+	str	xzr, [x2, #12]
+	mov	x3, sp
+	str	x3, [x2, #16]
 	/* end probe A: head.S reached --- */
 	bl	el2_setup			// Drop to EL1, w0=cpu_boot_mode
 	adrp	x23, __PHYS_OFFSET
@@ -140,9 +162,15 @@ ENTRY(stext)
 	 */
 	bl	__cpu_setup			// initialise processor
 	/* probe B: page tables built, CPU configured, still pre-MMU */
-	mov	x2, #0xd01
-	mov	x3, #0x0bee
-	smc	#0
+	movz	x2, #0x0800		// 0x48090800, low half
+	movk	x2, #0x4809, lsl #16	// 0x48090800, high half
+	mov	x3, #0x00b00002		// stage 2, seq 2
+	str	x3, [x2, #4]
+	mov	x3, #0x00b00002		// reached = stage 2
+	str	x3, [x2, #8]
+	str	xzr, [x2, #12]
+	mov	x3, sp
+	str	x3, [x2, #16]
 	b	__primary_switch
 ENDPROC(stext)
 
