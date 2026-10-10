@@ -34,6 +34,7 @@
 #include <linux/vmalloc.h>
 #include <linux/kernel_stat.h>
 #include <linux/start_kernel.h>
+#include <linux/chopin_crumb.h>
 #include <linux/security.h>
 #include <linux/smp.h>
 #include <linux/profile.h>
@@ -558,6 +559,7 @@ asmlinkage __visible void __init start_kernel(void)
 	char *command_line;
 	char *after_dashes;
 
+	chopin_crumb_mark(STAGE_START_KERNEL);
 	set_task_stack_end_magic(&init_task);
 	smp_setup_processor_id();
 	debug_objects_early_init();
@@ -573,8 +575,10 @@ asmlinkage __visible void __init start_kernel(void)
 	 */
 	boot_cpu_init();
 	page_address_init();
+	chopin_crumb_mark(STAGE_PRE_SETUP_ARCH);
 	pr_notice("%s", linux_banner);
 	setup_arch(&command_line);
+	chopin_crumb_mark(STAGE_POST_SETUP_ARCH);
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
@@ -584,6 +588,7 @@ asmlinkage __visible void __init start_kernel(void)
 
 	build_all_zonelists(NULL);
 	page_alloc_init();
+	chopin_crumb_mark(STAGE_POST_ZONELIST);
 
 	pr_notice("Kernel command line: %s\n", boot_command_line);
 	/* parameters may set static keys */
@@ -756,6 +761,7 @@ asmlinkage __visible void __init start_kernel(void)
 		efi_free_boot_services();
 	}
 
+	chopin_crumb_mark(STAGE_REST_INIT);
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
 
@@ -978,6 +984,7 @@ static void __init do_initcall_level(int level)
 
 static void __init do_initcalls(void)
 {
+	chopin_crumb_mark(STAGE_PRE_INITCALL);
 	int level;
 
 	for (level = 0; level < ARRAY_SIZE(initcall_levels) - 1; level++)
@@ -999,6 +1006,7 @@ static void __init do_basic_setup(void)
 	init_irq_proc();
 	do_ctors();
 	usermodehelper_enable();
+	chopin_crumb_mark(STAGE_POST_INITCALL);
 	do_initcalls();
 }
 
