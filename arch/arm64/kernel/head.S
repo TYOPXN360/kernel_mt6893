@@ -453,7 +453,9 @@ __primary_switched:
 	movz	x2, #0x0850
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b46
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 6: primary_switched entered, MMU on --- */
 
 	adr_l	x8, vectors			// load VBAR_EL1 with virtual
@@ -482,7 +484,9 @@ __primary_switched:
 	movz	x2, #0x0860
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b47
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 7: BSS cleared --- */
 	dsb	ishst				// Make zero page visible to PTW
 
@@ -503,7 +507,9 @@ __primary_switched:
 	movz	x2, #0x0870
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b48
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 8: KASLR decided --- */
 	add	sp, sp, #16
 	mov	x29, #0
@@ -511,7 +517,9 @@ __primary_switched:
 	movz	x2, #0x0880
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b49
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 9: about to call start_kernel --- */
 	b	start_kernel
 ENDPROC(__primary_switched)
@@ -993,7 +1001,9 @@ __primary_switch:
 	movz	x2, #0x0890
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b4a
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 10: __primary_switch entered --- */
 #ifdef CONFIG_RANDOMIZE_BASE
 	mov	x19, x0				// preserve new SCTLR_EL1 value
@@ -1004,7 +1014,9 @@ __primary_switch:
 	movz	x2, #0x08d0
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b4b
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 11: MMU on, identity map live --- */
 #ifdef CONFIG_RELOCATABLE
 #ifdef CONFIG_RELR
@@ -1014,7 +1026,9 @@ __primary_switch:
 	movz	x2, #0x08b0
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b4c
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 12: relocated --- */
 #ifdef CONFIG_RANDOMIZE_BASE
 	ldr	x8, =__primary_switched
@@ -1047,7 +1061,9 @@ __primary_switch:
 	movz	x2, #0x08c0
 	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b4d
+	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dsb	sy
 	/* probe 13: about to branch to __primary_switched --- */
 	ldr	x8, =__primary_switched
 	adrp	x0, __PHYS_OFFSET
