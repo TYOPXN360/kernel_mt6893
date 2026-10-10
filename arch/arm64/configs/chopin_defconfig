@@ -454,8 +454,11 @@ CONFIG_THINLTO=y
 CONFIG_CFI_CLANG=y
 CONFIG_SHADOW_CALL_STACK=y
 
-# The MTK GenieZone firmware owns EL2 on Chopin; keep Linux in EL1.
-# CONFIG_ARM64_VHE is not set
+# The stock 4.14 chopin_defconfig builds with VHE on. head.S el2_setup
+# only reaches the VHE branch when CurrentEL is EL2, and GenieZone
+# hands control over at EL1h, so this is inert either way. Restored to
+# match the 4.14 baseline and drop one variable.
+CONFIG_ARM64_VHE=1
 # CONFIG_ARM64_SVE is not set
 # CONFIG_ARM64_LSE_ATOMICS is not set
 # CONFIG_ARM64_USE_LSE_ATOMICS is not set
