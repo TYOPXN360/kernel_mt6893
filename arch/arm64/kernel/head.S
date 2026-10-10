@@ -450,7 +450,8 @@ __primary_switched:
 	add	sp, x4, #THREAD_SIZE
 	adr_l	x5, init_task
 	msr	sp_el0, x5			// Save thread_info
-	mov_q	x2, PAGE_OFFSET + 0x48090850
+	movz	x2, #0x0850
+	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b46
 	str	x3, [x2]
 	/* probe 6: primary_switched entered, MMU on --- */
@@ -478,7 +479,8 @@ __primary_switched:
 	adr_l	x2, __bss_stop
 	sub	x2, x2, x0
 	bl	__pi_memset
-	mov_q	x2, PAGE_OFFSET + 0x48090860
+	movz	x2, #0x0860
+	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b47
 	str	x3, [x2]
 	/* probe 7: BSS cleared --- */
@@ -498,14 +500,16 @@ __primary_switched:
 	ret					// to __primary_switch()
 0:
 #endif
-	mov_q	x2, PAGE_OFFSET + 0x48090870
+	movz	x2, #0x0870
+	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b48
 	str	x3, [x2]
 	/* probe 8: KASLR decided --- */
 	add	sp, sp, #16
 	mov	x29, #0
 	mov	x30, #0
-	mov_q	x2, PAGE_OFFSET + 0x48090880
+	movz	x2, #0x0880
+	movk	x2, #0x4809, lsl #16
 	mov	x3, #0x4b49
 	str	x3, [x2]
 	/* probe 9: about to call start_kernel --- */
@@ -986,17 +990,32 @@ ENDPROC(__relocate_kernel)
 #endif
 
 __primary_switch:
+	movz	x2, #0x0890
+	movk	x2, #0x4809, lsl #16
+	mov	x3, #0x4b4a
+	str	x3, [x2]
+	/* probe 10: __primary_switch entered --- */
 #ifdef CONFIG_RANDOMIZE_BASE
 	mov	x19, x0				// preserve new SCTLR_EL1 value
 	mrs	x20, sctlr_el1			// preserve old SCTLR_EL1 value
 #endif
 
 	bl	__enable_mmu
+	movz	x2, #0x08d0
+	movk	x2, #0x4809, lsl #16
+	mov	x3, #0x4b4b
+	str	x3, [x2]
+	/* probe 11: MMU on, identity map live --- */
 #ifdef CONFIG_RELOCATABLE
 #ifdef CONFIG_RELR
 	mov	x24, #0				// no RELR displacement yet
 #endif
 	bl	__relocate_kernel
+	movz	x2, #0x08b0
+	movk	x2, #0x4809, lsl #16
+	mov	x3, #0x4b4c
+	str	x3, [x2]
+	/* probe 12: relocated --- */
 #ifdef CONFIG_RANDOMIZE_BASE
 	ldr	x8, =__primary_switched
 	adrp	x0, __PHYS_OFFSET
@@ -1025,6 +1044,11 @@ __primary_switch:
 	bl	__relocate_kernel
 #endif
 #endif
+	movz	x2, #0x08c0
+	movk	x2, #0x4809, lsl #16
+	mov	x3, #0x4b4d
+	str	x3, [x2]
+	/* probe 13: about to branch to __primary_switched --- */
 	ldr	x8, =__primary_switched
 	adrp	x0, __PHYS_OFFSET
 	br	x8
