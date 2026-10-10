@@ -455,10 +455,15 @@ CONFIG_THINLTO=y
 CONFIG_CFI_CLANG=y
 CONFIG_SHADOW_CALL_STACK=y
 
-# The stock 4.14 chopin_defconfig builds with VHE on. head.S el2_setup
-# only reaches the VHE branch when CurrentEL is EL2, and GenieZone
-# hands control over at EL1h, so this is inert either way. Restored to
-# match the 4.14 baseline and drop one variable.
+# VHE stays on, matching both the stock 4.14 chopin_defconfig and the
+# 4.19 Agate defconfig.
+#
+# This had been turned off on a wrong theory and has been restored. It
+# is worth keeping because CONFIG_ARM64_VHE selects ARM64_VA_BITS_48
+# over ARM64_VA_BITS_39, and __create_page_tables in head.S builds the
+# identity map differently for each, the VA_BITS < 48 case adding an
+# extra translation level. GenieZone also lays out a 48-bit identity map
+# for the Linux context, 0x0 to 0x1bfffffff.
 CONFIG_ARM64_VHE=1
 # CONFIG_ARM64_SVE is not set
 # CONFIG_ARM64_LSE_ATOMICS is not set
