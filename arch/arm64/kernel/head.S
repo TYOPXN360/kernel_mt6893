@@ -423,10 +423,13 @@ __create_page_tables:
 	 * map, and the linear map does not exist yet either, since
 	 * paging_init() has not run this early in the boot.
 	 *
-	 * 0x40000000 and 0x48200000 are PMD indices 512 and 576, inside the
-	 * same PMD page, and share PUD index 1, so the extra descriptors
-	 * reuse the tables that are already there. IDMAP_DIR_SIZE stays 4
-	 * pages and this uses 3: one PGD, one PUD, one PMD.
+	 * Both ends land in the table that is already there, so no new
+	 * pages are consumed. With VA_BITS=39, 4K pages and PA=48:
+	 * IDMAP_PGTABLE_LEVELS is 3 and SWAPPER_PGTABLE_LEVELS is 2, so
+	 * map_memory emits a PGD entry and a PMD table but no PUD level.
+	 * 0x40000000 and 0x48200000 are PMD indices 512 and 576, in the
+	 * same PMD page (page 1), reached through the same PGD entry (1),
+	 * so the 65 extra descriptors all fit inside IDMAP_DIR_SIZE.
 	 */
 	movz	x6, #0x0000
 	movk	x6, #0x4820, lsl #16

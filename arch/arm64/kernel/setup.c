@@ -336,10 +336,13 @@ void __init setup_arch(char **cmdline_p)
 	 * point to zero page to avoid speculatively fetching new entries.
 	 */
 	cpu_uninstall_idmap();
+	chopin_crumb_mark(STAGE_SA_POST_UNINSTALL);
 
 	xen_early_init();
 	efi_init();
+	chopin_crumb_mark(STAGE_SA_MEMBLOCK_ENTER);
 	arm64_memblock_init();
+	chopin_crumb_mark(STAGE_SA_MEMBLOCK_DONE);
 
 	paging_init();
 	chopin_crumb_mark(STAGE_SA_PAGING);
