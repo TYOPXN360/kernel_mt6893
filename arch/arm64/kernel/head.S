@@ -408,6 +408,28 @@ __create_page_tables:
 	ldr_l	x4, idmap_ptrs_per_pgd
 	mov	x5, x3				// __pa(__idmap_text_start)
 	adr_l	x6, __idmap_text_end		// __pa(__idmap_text_end)
+	/*
+	 * Extend the identity map up to 0x48200000.
+	 *
+	 * As shipped this covers only __idmap_text_start to
+	 * __idmap_text_end, and vmlinux.lds.S caps that section at 4K, so
+	 * once the MMU is on almost nothing outside the image is reachable.
+	 * ramoops at 0x48090000 is far outside it, which is what made probe
+	 * 17 abort: the store to 0x48090910 had no descriptor in
+	 * idmap_pg_dir, and vbar_el1 is not loaded until
+	 * __primary_switched, so the translation fault had nowhere to vector.
+	 *
+	 * Reaching ramoops after the MMU needs either this map or the linear
+	 * map, and the linear map does not exist yet either, since
+	 * paging_init() has not run this early in the boot.
+	 *
+	 * 0x40000000 and 0x48200000 are PMD indices 512 and 576, inside the
+	 * same PMD page, and share PUD index 1, so the extra descriptors
+	 * reuse the tables that are already there. IDMAP_DIR_SIZE stays 4
+	 * pages and this uses 3: one PGD, one PUD, one PMD.
+	 */
+	movz	x6, #0x0000
+	movk	x6, #0x4820, lsl #16
 
 	map_memory x0, x1, x3, x6, x7, x3, x4, x10, x11, x12, x13, x14
 
