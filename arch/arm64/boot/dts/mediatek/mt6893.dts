@@ -28,8 +28,7 @@
 
 	/* chosen */
 	chosen: chosen {
-		bootargs = "earlycon=mtk8250,mmio32,0x11002000,921600n8 keep_bootcon \
-console=tty0 console=ttyS0,921600n1 root=/dev/ram \
+		bootargs = "console=tty0 console=ttyS0,921600n1 root=/dev/ram \
 vmalloc=400M slub_debug=OFZPU swiotlb=noforce \
 firmware_class.path=/vendor/firmware \
 page_owner=on loop.max_part=7";
