@@ -21,22 +21,21 @@
  *  stage <= CRUMB_IDMAP_LAST
  *	identity map installed by head.S, covering 0x40000000..0x48200000.
  *
- *  CRUMB_IDMAP_LAST < stage < CRUMB_LINEAR_FIRST
- *	neither the identity map nor the linear map reaches the block, so
- *	it is mapped through the fixmap with early_memremap(), which
- *	resolves in TTBR1 and stays live until early_ioremap_reset().
+ *  stage > CRUMB_IDMAP_LAST
+ *	the fixmap, via early_memremap(). That resolves in TTBR1 and does
+ *	not depend on the linear map covering the block.
  *
- *  stage >= CRUMB_LINEAR_FIRST
- *	the linear map exists, so __va() works.
+ * __va() is deliberately not used: whether the linear map covers the
+ * block depends on memblock not having it marked no-map, and a probe
+ * built on that assumption fails by faulting at the very spot being
+ * investigated. Stage numbers run in execution order, so a dump reads
+ * top to bottom.
  *
- * CRUMB_LINEAR_FIRST is the first stage that runs after map_mem() has
- * built the linear map. Marking anything earlier that way would fault,
- * which is why the paging_init() internals that run before it are
- * numbered below it: the marks are emitted in execution order, so a
- * dump can be read top to bottom.
+ * The one exception is cpu_replace_ttbr1(), which is bracketed by two
+ * mappings changing under it. Its marks select the channel explicitly;
+ * see STAGE_TTBR1_* below.
  */
 #define CRUMB_IDMAP_LAST	7
-#define CRUMB_LINEAR_FIRST	22
 
 /* start_kernel(), before setup_arch() -- identity map */
 #define STAGE_START_KERNEL	1
@@ -67,37 +66,60 @@
 #define STAGE_PI_MAP_KERNEL	20
 #define STAGE_PI_MAP_MEM	21
 
-/* paging_init() internals -- linear map exists from map_mem() onward */
-#define STAGE_PI_TTBR1_TEMP	22
-#define STAGE_PI_COPY_PGD	23
-#define STAGE_PI_TTBR1_SWAPPER	24
-#define STAGE_PI_CLEAR_FIXMAP	25
-#define STAGE_PI_DONE		26
+/*
+ * Inside cpu_replace_ttbr1(). Every dump so far stopped between 21 and
+ * 22, and this is the only code in that gap, so it is opened up step by
+ * step. The helper is expanded in paging_init() rather than called.
+ *
+ * From STAGE_TTBR1_IDMAP_IN onward these are written through the
+ * identity map explicitly, not through whatever the generic mark would
+ * pick. cpu_install_idmap() has just pointed TTBR0 at idmap_pg_dir,
+ * which head.S extends to cover 0x48090000, so that path is known live.
+ * TTBR1 simultaneously points at the new pgd, which has no fixmap
+ * entries yet, so the fixmap is exactly what cannot be trusted there.
+ */
+#define STAGE_TTBR1_ENTER	22	/* before cpu_install_idmap() */
+#define STAGE_TTBR1_IDMAP_IN	23	/* identity map live from here */
+#define STAGE_TTBR1_REPLACED	24	/* TTBR1 now the new pgd */
+#define STAGE_TTBR1_IDMAP_OUT	25	/* idmap gone again */
 
-/* the rest of setup_arch() -- linear map */
-#define STAGE_SA_PAGING		27
-#define STAGE_SA_DEVTREE	28
-#define STAGE_SA_BOOTMEM	29
-#define STAGE_SA_STD_RESOURCES	30
-#define STAGE_SA_SMP_CPUS	31
-#define STAGE_POST_SETUP_ARCH	32
+/* paging_init() internals, back on the fixmap */
+#define STAGE_PI_TTBR1_TEMP	26
+#define STAGE_PI_COPY_PGD	27
+#define STAGE_PI_TTBR1_SWAPPER	28
+#define STAGE_PI_CLEAR_FIXMAP	29
+#define STAGE_PI_DONE		30
 
-/* the rest of start_kernel() -- linear map */
-#define STAGE_POST_ZONELIST	33
-#define STAGE_POST_MM_INIT	34
-#define STAGE_POST_CONSOLE	35
-#define STAGE_REST_INIT		36
+/* the rest of setup_arch() */
+#define STAGE_SA_PAGING		31
+#define STAGE_SA_DEVTREE	32
+#define STAGE_SA_BOOTMEM	33
+#define STAGE_SA_STD_RESOURCES	34
+#define STAGE_SA_SMP_CPUS	35
+#define STAGE_POST_SETUP_ARCH	36
 
-#define STAGE_BASIC_SETUP	37
-#define STAGE_INITCALLS_ENTER	38
+/* the rest of start_kernel() */
+#define STAGE_POST_ZONELIST	37
+#define STAGE_POST_MM_INIT	38
+#define STAGE_POST_CONSOLE	39
+#define STAGE_REST_INIT		40
+
+#define STAGE_BASIC_SETUP	41
+#define STAGE_INITCALLS_ENTER	42
 
 /* stage = STAGE_INITCALL_LEVEL + initcall level (0..7) */
-#define STAGE_INITCALL_LEVEL	40
+#define STAGE_INITCALL_LEVEL	44
 
 #ifdef CONFIG_CHOPIN_CRUMB
 void chopin_crumb_mark(u32 stage);
+/*
+ * Same, but the caller states whether the identity map is live. Needed
+ * only inside cpu_replace_ttbr1(); see chopin_crumb.c.
+ */
+void chopin_crumb_mark_idmap(u32 stage, bool force_idmap);
 #else
 static inline void chopin_crumb_mark(u32 stage) { }
+static inline void chopin_crumb_mark_idmap(u32 stage, bool force_idmap) { }
 #endif
 
 #endif /* _LINUX_CHOPIN_CRUMB_H */

@@ -146,14 +146,14 @@ static void crumb_stash_one(const struct chopin_crumb *c)
  * works depends on the block not being marked no-map, and that is not
  * something this code is in a position to guarantee.
  */
-static bool crumb_write_block(void)
+static bool crumb_write_block(bool force_idmap)
 {
 	struct chopin_crumb *tbl;
 	void *fix = NULL;
 	unsigned long len = 0;
 	u32 i;
 
-	if (crumb_reached <= CRUMB_IDMAP_LAST) {
+	if (force_idmap || crumb_reached <= CRUMB_IDMAP_LAST) {
 		tbl = (void *)(unsigned long)CRUMB_TABLE;
 	} else {
 		unsigned long start = CRUMB_TABLE & PAGE_MASK;
@@ -163,7 +163,8 @@ static bool crumb_write_block(void)
 		fix = early_memremap(start, len);
 		if (!fix)
 			return false;
-		tbl = (char *)fix + (CRUMB_TABLE - start);
+		tbl = (struct chopin_crumb *)((char *)fix +
+					      (CRUMB_TABLE - start));
 	}
 
 	for (i = 0; i < crumb_stash_cnt; i++)
@@ -177,7 +178,26 @@ static bool crumb_write_block(void)
 	return true;
 }
 
+/*
+ * Mark a stage, choosing the channel from the numeric range as usual.
+ */
 void chopin_crumb_mark(u32 stage)
+{
+	chopin_crumb_mark_idmap(stage, stage <= CRUMB_IDMAP_LAST);
+}
+
+/*
+ * Mark a stage, overriding the channel.
+ *
+ * force_idmap exists for the inside of cpu_replace_ttbr1(), where the
+ * two mappings swap over and the usual range rule gets it wrong: past
+ * STAGE_PI_MAP_MEM the fixmap is the correct default, but between
+ * cpu_install_idmap() and cpu_uninstall_idmap() TTBR1 holds the new pgd
+ * and has no fixmap entries, while TTBR0 holds the identity map that
+ * head.S extended to cover the block. Only the caller knows which of the
+ * two is live, so it says so.
+ */
+void chopin_crumb_mark_idmap(u32 stage, bool force_idmap)
 {
 	struct chopin_crumb c;
 	u64 sp = (u64)(unsigned long)__builtin_frame_address(0);
@@ -189,8 +209,7 @@ void chopin_crumb_mark(u32 stage)
 	c.stage = stage;
 	c.reached = crumb_reached;
 	c.sp = sp;
-	c.flags = (stage <= CRUMB_IDMAP_LAST) ? CRUMB_FLAG_IDMAP
-					      : CRUMB_FLAG_FIXMAP;
+	c.flags = force_idmap ? CRUMB_FLAG_IDMAP : CRUMB_FLAG_FIXMAP;
 
 	/*
 	 * Unconditional and fault-free. If everything else fails, this is
@@ -198,7 +217,7 @@ void chopin_crumb_mark(u32 stage)
 	 */
 	crumb_stash_one(&c);
 
-	if (!crumb_write_block())
+	if (!crumb_write_block(force_idmap))
 		crumb_stash[crumb_stash_cnt - 1].flags = CRUMB_FLAG_BSS;
 }
 
@@ -216,6 +235,7 @@ static int __init chopin_crumb_flush_init(void)
 	struct chopin_crumb *tbl;
 	u32 i;
 
+	/* ioremap() builds its own tables, so no channel choice is needed. */
 	tbl = ioremap(CRUMB_TABLE, CRUMB_MAX * sizeof(struct chopin_crumb));
 	if (!tbl)
 		return 0;
