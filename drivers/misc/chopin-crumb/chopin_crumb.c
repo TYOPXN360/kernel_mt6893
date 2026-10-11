@@ -55,7 +55,7 @@
  *		0x40000000..0x48200000. head.S probes 6-9 store to this very
  *		block that way and land in DRAM, which proves the path.
  *
- *	CRUMB_IDMAP_LAST < stage < STAGE_SA_PAGING
+ *	CRUMB_IDMAP_LAST < stage < CRUMB_LINEAR_FIRST
  *		neither the identity map nor the linear map reaches the
  *		block, so it is mapped through the fixmap with
  *		early_memremap(). That resolves in TTBR1, which is live
@@ -64,7 +64,7 @@
  *		early_ioremap_reset() only runs after setup_arch() returns,
  *		so the whole interval is covered.
  *
- *	stage >= STAGE_SA_PAGING
+ *	stage >= CRUMB_LINEAR_FIRST
  *		the linear map built by paging_init() is live, so __va()
  *		works. The block sits inside the /memory node and no DTB
  *		declares it reserved or no-map -- LK is what carves it out
@@ -182,7 +182,7 @@ void chopin_crumb_mark(u32 stage)
 	if (stage <= CRUMB_IDMAP_LAST) {
 		c.flags = CRUMB_FLAG_IDMAP;
 		tbl = (void *)(unsigned long)CRUMB_TABLE;
-	} else if (stage >= STAGE_SA_PAGING) {
+	} else if (stage >= CRUMB_LINEAR_FIRST) {
 		c.flags = CRUMB_FLAG_LINEAR;
 		tbl = __va(CRUMB_TABLE);
 	} else {

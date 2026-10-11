@@ -28,6 +28,7 @@
 #include <linux/mman.h>
 #include <linux/nodemask.h>
 #include <linux/memblock.h>
+#include <linux/chopin_crumb.h>
 #include <linux/fs.h>
 #include <linux/io.h>
 #include <linux/mm.h>
@@ -699,11 +700,22 @@ static void __init map_kernel(pgd_t *pgdp)
  */
 void __init paging_init(void)
 {
-	phys_addr_t pgd_phys = early_pgtable_alloc();
-	pgd_t *pgdp = pgd_set_fixmap(pgd_phys);
+	phys_addr_t pgd_phys;
+	pgd_t *pgdp;
+
+	chopin_crumb_mark(STAGE_PI_ENTER);
+
+	pgd_phys = early_pgtable_alloc();
+	chopin_crumb_mark(STAGE_PI_ALLOC);
+
+	pgdp = pgd_set_fixmap(pgd_phys);
+	chopin_crumb_mark(STAGE_PI_SET_FIXMAP);
 
 	map_kernel(pgdp);
+	chopin_crumb_mark(STAGE_PI_MAP_KERNEL);
+
 	map_mem(pgdp);
+	chopin_crumb_mark(STAGE_PI_MAP_MEM);
 
 	/*
 	 * We want to reuse the original swapper_pg_dir so we don't have to
@@ -714,10 +726,17 @@ void __init paging_init(void)
 	 * To do this we need to go via a temporary pgd.
 	 */
 	cpu_replace_ttbr1(__va(pgd_phys));
+	chopin_crumb_mark(STAGE_PI_TTBR1_TEMP);
+
 	memcpy(swapper_pg_dir, pgdp, PGD_SIZE);
+	chopin_crumb_mark(STAGE_PI_COPY_PGD);
+
 	cpu_replace_ttbr1(lm_alias(swapper_pg_dir));
+	chopin_crumb_mark(STAGE_PI_TTBR1_SWAPPER);
 
 	pgd_clear_fixmap();
+	chopin_crumb_mark(STAGE_PI_CLEAR_FIXMAP);
+
 	memblock_free(pgd_phys, PAGE_SIZE);
 
 	/*
@@ -727,6 +746,8 @@ void __init paging_init(void)
 	memblock_free(__pa_symbol(swapper_pg_dir) + PAGE_SIZE,
 		      __pa_symbol(swapper_pg_end) - __pa_symbol(swapper_pg_dir)
 		      - PAGE_SIZE);
+
+	chopin_crumb_mark(STAGE_PI_DONE);
 }
 
 /*
