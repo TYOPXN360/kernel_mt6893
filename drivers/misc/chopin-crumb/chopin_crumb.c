@@ -15,71 +15,51 @@
  * so anything the kernel leaves at 0x48090000 comes back out on the next
  * start. head.S owns +0x800 through +0x91f; this file starts at +0x920.
  *
- * Earlier attempts at this produced nothing, and the reasons are worth
- * keeping:
+ * Reaching that block depends on a mapping that covers it, and the
+ * mappings come and go, so each record is written twice:
  *
- *  1. Writing to LK's own log_store buffer at 0x7ffbf000. That region is
- *     not part of the exported pstore image, so it is never visible.
+ *  1. Always into a .bss array. That array lives inside the kernel image,
+ *     which TTBR1 maps from _text to _end for the whole of early boot --
+ *     through swapper_pg_dir at first, then through the paging_init()
+ *     tables which carry the same image mappings over. Writing it cannot
+ *     fault, whatever else is going on.
  *
- *  2. Using memremap(MEMREMAP_WB). The first call site is
- *     STAGE_START_KERNEL at the very top of start_kernel(), long before
- *     setup_arch() populates the paging structures and long before the
- *     vmalloc and slab allocators exist. try_ram_remap() therefore fails
- *     its pfn_valid() check and the ioremap() fallback cannot allocate,
- *     so the mapping stayed NULL through every stage and only the
- *     pr_err() fallback ran -- into a console nobody can read.
+ *  2. Into the pstore block, but only when a mapping for it is known to
+ *     be available. Failures here are silent by design: the .bss copy
+ *     still holds the record and a later flusher puts it in the block.
  *
- *  3. Storing without cleaning the cache. dsb orders stores, it does not
- *     push them to the point of coherency; with caches on, the values
- *     can still be dirty in L1/L2 when LK reads the block back. The
- *     head.S probes needed an explicit dc cvac for exactly this reason,
- *     and the two dumps show it: without the clean, probe 17 and every
- *     probe after it disappeared.
+ * The flusher runs from an initcall, which is late enough that every
+ * mapping is settled, and it replays the entire .bss array. It reaches
+ * the block with ioremap(), which builds its own page tables and so does
+ * not depend on the linear map covering the block -- the same way
+ * ramoops reaches it. A dump only exists after a reset, so the block is
+ * the only place that survives.
  *
- * Reachability of the pstore block changes twice, both times inside
- * setup_arch():
+ * History, kept because each entry cost a boot cycle:
  *
- *	parse_early_param();
- *	local_daif_restore(DAIF_PROCCTX_NOIRQ);
- *	cpu_uninstall_idmap();	<- TTBR0 -> zero page; identity map gone
- *	arm64_memblock_init();
- *	paging_init();		<- linear map live again
+ *  1. Writing to LK's own log_store buffer at 0x7ffbf000 produced
+ *     nothing: that region is not part of the exported pstore image.
  *
- * and the kernel currently stops inside that second interval, so all
- * three regimes have to be writable or the mechanism cannot see the
- * failure it was built for. A record travels by whichever channel is
- * available:
+ *  2. Using memremap(MEMREMAP_WB) produced nothing either. The first
+ *     call site is STAGE_START_KERNEL at the top of start_kernel(),
+ *     before setup_arch() has populated the paging structures and before
+ *     the vmalloc and slab allocators exist, so try_ram_remap() fails
+ *     its pfn_valid() check and the ioremap() fallback cannot allocate.
  *
- *	stage <= CRUMB_IDMAP_LAST
- *		identity map installed by head.S, which covers
- *		0x40000000..0x48200000. head.S probes 6-9 store to this very
- *		block that way and land in DRAM, which proves the path.
+ *  3. Storing without cleaning the cache lost everything after the MMU
+ *     came on. dsb orders stores, it does not push them to the point of
+ *     coherency, and the head.S probes show it plainly: without dc cvac,
+ *     probe 17 and every probe after it disappeared.
  *
- *	stage > CRUMB_IDMAP_LAST
- *		the fixmap, via early_memremap(). That resolves in TTBR1,
- *		which is live throughout, and draws on the slots
- *		early_fixmap_init() and early_ioremap_init() set aside near
- *		the top of setup_arch(). early_ioremap_reset() runs later,
- *		but early_memremap() keeps working past it because it falls
- *		back to __late_set_fixmap internally, so one channel covers
- *		everything after the identity map is gone.
+ *  4. Using __va() for the later stages stopped the boot at the first
+ *     stage that used it. The kernel only reached the vibrator again once
+ *     __va() was removed, so that path was provably fatal rather than
+ *     merely unreliable.
  *
- * __va() is deliberately not used anywhere in this file. It depends on
- * the linear map covering the block, which in turn depends on memblock
- * not having the block marked no-map, and an observer must not be built
- * on an assumption whose failure mode is a fault at the exact spot being
- * investigated. Four dumps in a row stopped on the very first stage that
- * would have used __va(), which is what a bad assumption there looks
- * like: indistinguishable from the hang being chased.
- *
- * Nothing here may fault: the whole point is to observe a boot that dies
- * silently, and a fault in the observer would be indistinguishable from
- * the failure being chased. The fixmap path therefore falls back to a
- * plain .bss stash if early_memremap() refuses, and the .bss stash is
- * replayed into the block by the first stage that has a proper mapping
- * again. A stage that only ever reached .bss is invisible in the dump,
- * which is a poor outcome, but still far better than a fault that cannot
- * report its own cause.
+ * Lesson from 4: an observer must not assume a mapping exists. Where the
+ * assumption is wrong, the probe faults and the boot stops at the probe,
+ * which is indistinguishable in the dump from the hang being chased.
+ * Hence the unconditional .bss write plus best-effort block writes.
  */
 
 #include <linux/kernel.h>
@@ -90,7 +70,6 @@
 #include <linux/mm.h>
 #include <asm/barrier.h>
 #include <asm/cacheflush.h>
-#include <asm/memory.h>
 
 /*
  * Deliberately unlike the head.S probes, which use 0x44424b41 through
@@ -116,11 +95,10 @@
  */
 #define CRUMB_MAX		48
 
-/* Which channel a record went through. */
-#define CRUMB_FLAG_STASH	0x10	/* .bss only, never reached DRAM */
+/* Which channel a record was written through. */
 #define CRUMB_FLAG_IDMAP	1
 #define CRUMB_FLAG_FIXMAP	3
-#define CRUMB_FLAG_LINEAR	2
+#define CRUMB_FLAG_BSS		0x20	/* only the .bss copy exists */
 
 struct chopin_crumb {
 	u32 magic;
@@ -130,14 +108,17 @@ struct chopin_crumb {
 	u64 sp;
 };
 
-/* Staging area, in .bss, mapped by TTBR1 for the whole of early boot. */
+/*
+ * The unconditional copy. In .bss, inside the kernel image, mapped by
+ * TTBR1 for the whole of early boot.
+ */
 static struct chopin_crumb crumb_stash[CRUMB_MAX];
 static u32 crumb_stash_cnt;
 static u32 crumb_reached;
 
 /*
  * dsb orders the stores; only an explicit clean pushes them to the point
- * of coherency that LK reads from. Clean the whole table rather than the
+ * of coherency that LK reads from. Clean the whole block rather than the
  * single record being written, because the table is written with a
  * scatter of stores and a line-at-a-time clean would leave the
  * neighbours dirty in cache.
@@ -148,29 +129,57 @@ static void crumb_flush(void *addr, size_t len)
 	dsb(sy);
 }
 
-static void crumb_stash_one(struct chopin_crumb *c)
+static void crumb_stash_one(const struct chopin_crumb *c)
 {
 	if (crumb_stash_cnt < CRUMB_MAX)
 		crumb_stash[crumb_stash_cnt++] = *c;
 }
 
-/* Replay everything staged so far, plus the current record. */
-static void crumb_replay(struct chopin_crumb *tbl)
+/*
+ * Best-effort copy of the accumulated records into the pstore block.
+ * Returns true if the block was written.
+ *
+ * The identity map covers the block until setup_arch() removes it, and
+ * CRUMB_IDMAP_LAST is the last stage that runs before that. Past it, the
+ * fixmap is used, which resolves in TTBR1 and does not care whether the
+ * linear map covers the block. __va() is not used at all: whether it
+ * works depends on the block not being marked no-map, and that is not
+ * something this code is in a position to guarantee.
+ */
+static bool crumb_write_block(void)
 {
+	struct chopin_crumb *tbl;
+	void *fix = NULL;
+	unsigned long len = 0;
 	u32 i;
+
+	if (crumb_reached <= CRUMB_IDMAP_LAST) {
+		tbl = (void *)(unsigned long)CRUMB_TABLE;
+	} else {
+		unsigned long start = CRUMB_TABLE & PAGE_MASK;
+
+		len = PAGE_ALIGN(CRUMB_TABLE + CRUMB_MAX *
+				 sizeof(struct chopin_crumb) - start);
+		fix = early_memremap(start, len);
+		if (!fix)
+			return false;
+		tbl = (char *)fix + (CRUMB_TABLE - start);
+	}
 
 	for (i = 0; i < crumb_stash_cnt; i++)
 		tbl[i] = crumb_stash[i];
 
 	crumb_flush(tbl, CRUMB_MAX * sizeof(struct chopin_crumb));
+
+	if (fix)
+		early_iounmap(fix, len);
+
+	return true;
 }
 
 void chopin_crumb_mark(u32 stage)
 {
 	struct chopin_crumb c;
-	void *tbl = NULL;
-	void *fix = NULL;
-	unsigned long len = 0;
 	u64 sp = (u64)(unsigned long)__builtin_frame_address(0);
 
 	if (stage > crumb_reached)
@@ -180,59 +189,43 @@ void chopin_crumb_mark(u32 stage)
 	c.stage = stage;
 	c.reached = crumb_reached;
 	c.sp = sp;
-
-	if (stage <= CRUMB_IDMAP_LAST) {
-		c.flags = CRUMB_FLAG_IDMAP;
-		tbl = (void *)(unsigned long)CRUMB_TABLE;
-	} else {
-		/*
-		 * Past the identity map, reach the block through the fixmap.
-		 * It resolves in TTBR1 and does not depend on whether the
-		 * linear map happens to cover this block.
-		 *
-		 * __va() is deliberately not used. Whether it works depends
-		 * on memblock not having the block marked no-map, and that
-		 * assumption must not live in the observer: if it is wrong
-		 * the probe faults and the boot stops right there, which
-		 * looks exactly like the hang that was being chased. Four
-		 * dumps in a row stopped on the step where this function
-		 * first called __va(), which is what that failure mode looks
-		 * like from the outside.
-		 *
-		 * The mapping is taken and released per call. early_memremap()
-		 * keeps working after early_ioremap_reset() -- it switches to
-		 * __late_set_fixmap internally -- but the slots it hands out
-		 * are reused, so a cached pointer would go stale.
-		 */
-		unsigned long start = CRUMB_TABLE & PAGE_MASK;
-
-		len = PAGE_ALIGN(CRUMB_TABLE + CRUMB_MAX *
-				 sizeof(struct chopin_crumb) - start);
-		fix = early_memremap(start, len);
-		if (fix) {
-			c.flags = CRUMB_FLAG_FIXMAP;
-			tbl = (char *)fix + (CRUMB_TABLE - start);
-		}
-	}
-
-	if (!tbl) {
-		/*
-		 * No channel is usable right now. Record it in .bss so the
-		 * next stage that can write replays it, and return without
-		 * touching anything that might fault.
-		 */
-		c.flags = CRUMB_FLAG_STASH;
-		crumb_stash_one(&c);
-		return;
-	}
-
-	crumb_stash_one(&c);
-	crumb_replay(tbl);
+	c.flags = (stage <= CRUMB_IDMAP_LAST) ? CRUMB_FLAG_IDMAP
+					      : CRUMB_FLAG_FIXMAP;
 
 	/*
-	 * Give the slot back so the pool is not exhausted over the many
-	 * stages that run after this point.
+	 * Unconditional and fault-free. If everything else fails, this is
+	 * what the dump will be built from.
 	 */
-	if (fix)
-		early_iounmap(fix, len);
+	crumb_stash_one(&c);
+
+	if (!crumb_write_block())
+		crumb_stash[crumb_stash_cnt - 1].flags = CRUMB_FLAG_BSS;
 }
+
+/*
+ * Late flush, for a boot that survives all the way and still needs to
+ * leave a complete table behind on reset. By now the allocator is up, so
+ * this does not depend on the linear map covering the block at all:
+ * ioremap() builds its own page tables for the range, which is exactly
+ * how ramoops reaches the same memory (ram_core.c does ioremap() on the
+ * address LK passes on the command line). That makes this the one path
+ * that works regardless of how map_mem() treated the block.
+ */
+static int __init chopin_crumb_flush_init(void)
+{
+	struct chopin_crumb *tbl;
+	u32 i;
+
+	tbl = ioremap(CRUMB_TABLE, CRUMB_MAX * sizeof(struct chopin_crumb));
+	if (!tbl)
+		return 0;
+
+	for (i = 0; i < crumb_stash_cnt; i++)
+		tbl[i] = crumb_stash[i];
+
+	crumb_flush(tbl, CRUMB_MAX * sizeof(struct chopin_crumb));
+	iounmap(tbl);
+
+	return 0;
+}
+late_initcall(chopin_crumb_flush_init);
