@@ -38,6 +38,7 @@
 #include <linux/proc_fs.h>
 #include <linux/memblock.h>
 #include <linux/of_fdt.h>
+#include <linux/chopin_crumb.h>
 #include <linux/efi.h>
 #include <linux/psci.h>
 #include <linux/sched/task.h>
@@ -306,10 +307,13 @@ void __init setup_arch(char **cmdline_p)
 
 	*cmdline_p = boot_command_line;
 
+	chopin_crumb_mark(STAGE_SA_ENTER);
 	early_fixmap_init();
 	early_ioremap_init();
+	chopin_crumb_mark(STAGE_SA_IOREMAP);
 
 	setup_machine_fdt(__fdt_pointer);
+	chopin_crumb_mark(STAGE_SA_MACHINE_FDT);
 
 	/*
 	 * Initialise the static keys early as they may be enabled by the
@@ -317,6 +321,7 @@ void __init setup_arch(char **cmdline_p)
 	 */
 	jump_label_init();
 	parse_early_param();
+	chopin_crumb_mark(STAGE_SA_EARLY_PARAM);
 
 	/*
 	 * Unmask asynchronous aborts and fiq after bringing up possible
@@ -324,6 +329,7 @@ void __init setup_arch(char **cmdline_p)
 	 * occurred).
 	 */
 	local_daif_restore(DAIF_PROCCTX_NOIRQ);
+	chopin_crumb_mark(STAGE_SA_PRE_UNINSTALL);
 
 	/*
 	 * TTBR0 is only used for the identity mapping at this stage. Make it
@@ -336,6 +342,7 @@ void __init setup_arch(char **cmdline_p)
 	arm64_memblock_init();
 
 	paging_init();
+	chopin_crumb_mark(STAGE_SA_PAGING);
 
 	acpi_table_upgrade();
 
@@ -344,12 +351,15 @@ void __init setup_arch(char **cmdline_p)
 
 	if (acpi_disabled)
 		unflatten_device_tree();
+	chopin_crumb_mark(STAGE_SA_DEVTREE);
 
 	bootmem_init();
+	chopin_crumb_mark(STAGE_SA_BOOTMEM);
 
 	kasan_init();
 
 	request_standard_resources();
+	chopin_crumb_mark(STAGE_SA_STD_RESOURCES);
 
 	early_ioremap_reset();
 
@@ -361,6 +371,7 @@ void __init setup_arch(char **cmdline_p)
 	cpu_read_bootcpu_ops();
 	smp_init_cpus();
 	smp_build_mpidr_hash();
+	chopin_crumb_mark(STAGE_SA_SMP_CPUS);
 
 	/* Init percpu seeds for random tags after cpus are set up. */
 	kasan_init_tags();

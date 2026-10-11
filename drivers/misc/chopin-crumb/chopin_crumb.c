@@ -52,11 +52,13 @@
  *    physical address; head.S probes 6-9 store to this very block that
  *    way and land in DRAM, which is what proves the path.
  *
- *  - From STAGE_POST_SETUP_ARCH onward the linear map is the one to use.
- *    The block sits inside the /memory node (0x40000000..0x7e605000) and
- *    no DTB declares it reserved or no-map -- it is LK that carves it out
- *    and passes the address on the command line -- so map_mem() covers it
- *    with PAGE_KERNEL and __va() resolves.
+ *  - From paging_init() on, the linear map is the one to use. The block
+ *    sits inside the /memory node (0x40000000..0x7e605000) and no DTB
+ *    declares it reserved or no-map -- it is LK that carves it out and
+ *    passes the address on the command line -- so map_mem() covers it
+ *    with PAGE_KERNEL and __va() resolves. Stages 3-6 sit before
+ *    cpu_uninstall_idmap() and still use the identity map; see
+ *    CRUMB_IDMAP_LAST in the header.
  *
  * Nothing here may fault: the whole point is to observe a boot that dies
  * silently, and a fault in the observer would be indistinguishable from
@@ -125,7 +127,13 @@ void chopin_crumb_mark(u32 stage)
 {
 	struct chopin_crumb *tbl;
 	struct chopin_crumb c;
-	bool linear = stage >= STAGE_POST_SETUP_ARCH;
+	/*
+	 * Stages above CRUMB_IDMAP_LAST sit inside the window where
+	 * setup_arch() has already run cpu_uninstall_idmap() but not yet
+	 * paging_init(). Nothing is marked there: neither mapping exists,
+	 * and a fault would be exactly as silent as the boot being chased.
+	 */
+	bool linear = stage > CRUMB_IDMAP_LAST;
 	u64 sp = (u64)(unsigned long)__builtin_frame_address(0);
 
 	tbl = linear ? __va(CRUMB_TABLE)
