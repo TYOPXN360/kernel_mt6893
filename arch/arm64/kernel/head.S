@@ -477,6 +477,7 @@ __primary_switched:
 	mov	x3, #0x4b46
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 6: primary_switched entered, MMU on --- */
 
@@ -508,6 +509,7 @@ __primary_switched:
 	mov	x3, #0x4b47
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 7: BSS cleared --- */
 	dsb	ishst				// Make zero page visible to PTW
@@ -531,6 +533,7 @@ __primary_switched:
 	mov	x3, #0x4b48
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 8: KASLR decided --- */
 	add	sp, sp, #16
@@ -541,6 +544,7 @@ __primary_switched:
 	mov	x3, #0x4b49
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 9: about to call start_kernel --- */
 	b	start_kernel
@@ -863,10 +867,8 @@ ENTRY(__enable_mmu)
 	mov	x6, #0x4b4e
 	movk	x6, #0x4442, lsl #16
 	str	x6, [x5]
+	dc	cvac, x5
 	dsb	sy
-	/* probe 17: MMU enabled --- */
-	/* probe 16: ttbr computed, MMU still off --- */
-	/* probe 15: early boot status recorded --- */
 	/* probe 14: TGRAN ok, MMU still off --- */
 	update_early_cpu_boot_status 0, x1, x2
 	movz	x5, #0x08f0
@@ -874,7 +876,9 @@ ENTRY(__enable_mmu)
 	mov	x6, #0x4b4f
 	movk	x6, #0x4442, lsl #16
 	str	x6, [x5]
+	dc	cvac, x5
 	dsb	sy
+	/* probe 15: early boot status recorded --- */
 	adrp	x1, idmap_pg_dir
 	adrp	x2, swapper_pg_dir
 	phys_to_ttbr x3, x1
@@ -884,7 +888,9 @@ ENTRY(__enable_mmu)
 	mov	x6, #0x4b50
 	movk	x6, #0x4442, lsl #16
 	str	x6, [x5]
+	dc	cvac, x5
 	dsb	sy
+	/* probe 16: ttbr computed, MMU still off --- */
 	msr	ttbr0_el1, x3			// load TTBR0
 	msr	ttbr1_el1, x4			// load TTBR1
 	isb
@@ -895,7 +901,9 @@ ENTRY(__enable_mmu)
 	mov	x6, #0x4b51
 	movk	x6, #0x4442, lsl #16
 	str	x6, [x5]
+	dc	cvac, x5
 	dsb	sy
+	/* probe 17: MMU enabled --- */
 	/*
 	 * Invalidate the local I-cache so that any instructions fetched
 	 * speculatively from the PoC are discarded, since they may have
@@ -1053,6 +1061,7 @@ __primary_switch:
 	mov	x3, #0x4b4a
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 10: __primary_switch entered --- */
 #ifdef CONFIG_RANDOMIZE_BASE
@@ -1066,6 +1075,7 @@ __primary_switch:
 	mov	x3, #0x4b4b
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 11: MMU on, identity map live --- */
 #ifdef CONFIG_RELOCATABLE
@@ -1078,6 +1088,7 @@ __primary_switch:
 	mov	x3, #0x4b4c
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 12: relocated --- */
 #ifdef CONFIG_RANDOMIZE_BASE
@@ -1113,6 +1124,7 @@ __primary_switch:
 	mov	x3, #0x4b4d
 	movk	x3, #0x4442, lsl #16
 	str	x3, [x2]
+	dc	cvac, x2
 	dsb	sy
 	/* probe 13: about to branch to __primary_switched --- */
 	ldr	x8, =__primary_switched
