@@ -1,9 +1,14 @@
 config CHOPIN_CRUMB
 	bool "Chopin early-boot breadcrumbs"
 	help
-	  Record early boot progress into LK's log_store buffer in DRAM so
+	  Record early boot progress into the pstore block at 0x48090000 so
 	  it is carried into the expdb partition on the next start. Used to
 	  locate where the 4.19 kernel stops, since UART output is muted by
 	  LK and no in-kernel dump path exists on this tree.
+
+	  Each stage stores a small record through the identity map (before
+	  setup_arch()) or the linear map (after it) and cleans it to the
+	  point of coherency, so the value survives into DRAM where LK's
+	  kedump exports it.
 
 	  Say N if you do not need boot breadcrumbs on Chopin.

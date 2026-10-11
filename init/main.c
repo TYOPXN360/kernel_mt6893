@@ -614,6 +614,7 @@ asmlinkage __visible void __init start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_init();
+	chopin_crumb_mark(STAGE_POST_MM_INIT);
 
 	ftrace_init();
 
@@ -692,6 +693,7 @@ asmlinkage __visible void __init start_kernel(void)
 	 * this. But we do want output early, in case something goes wrong.
 	 */
 	console_init();
+	chopin_crumb_mark(STAGE_POST_CONSOLE);
 	if (panic_later)
 		panic("Too many boot %s vars at `%s'", panic_later,
 		      panic_param);
@@ -977,6 +979,8 @@ static void __init do_initcall_level(int level)
 		   level, level,
 		   NULL, &repair_env_string);
 
+	chopin_crumb_mark(STAGE_INITCALL_LEVEL + level);
+
 	trace_initcall_level(initcall_level_names[level]);
 	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
 		do_one_initcall(initcall_from_entry(fn));
@@ -984,7 +988,7 @@ static void __init do_initcall_level(int level)
 
 static void __init do_initcalls(void)
 {
-	chopin_crumb_mark(STAGE_PRE_INITCALL);
+	chopin_crumb_mark(STAGE_INITCALLS_ENTER);
 	int level;
 
 	for (level = 0; level < ARRAY_SIZE(initcall_levels) - 1; level++)
@@ -1006,7 +1010,7 @@ static void __init do_basic_setup(void)
 	init_irq_proc();
 	do_ctors();
 	usermodehelper_enable();
-	chopin_crumb_mark(STAGE_POST_INITCALL);
+	chopin_crumb_mark(STAGE_BASIC_SETUP);
 	do_initcalls();
 }
 

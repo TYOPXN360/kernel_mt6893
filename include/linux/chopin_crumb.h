@@ -5,26 +5,32 @@
 #include <linux/types.h>
 
 /*
- * Early boot stages, recorded into LK's log_store buffer in DRAM so they
- * survive into the expdb partition on the next start. The working 4.14
- * kernel reports MemTotal 5598444 kB while the DTB only declares 998 MB,
- * which shows LK widens /memory before handing over.
+ * Early boot stages, recorded into the pstore block at 0x48090000 that
+ * LK re-exports through the expdb partition on the next start.
+ *
+ * Stages 1 and 2 are marked from start_kernel() before setup_arch(),
+ * while the identity map head.S installed is still live on TTBR0.
+ * setup_arch() calls cpu_uninstall_idmap() and then paging_init(), so
+ * STAGE_POST_SETUP_ARCH and everything after it goes through the linear
+ * map instead. See chopin_crumb.c.
  */
 #define STAGE_START_KERNEL	1
 #define STAGE_PRE_SETUP_ARCH	2
 #define STAGE_POST_SETUP_ARCH	3
-#define STAGE_BANNER		4
-#define STAGE_POST_ZONELIST	5
-#define STAGE_PRE_INITCALL	6
-#define STAGE_POST_INITCALL	7
-#define STAGE_REST_INIT		8
-#define STAGE_SMP_INIT		9
+#define STAGE_POST_ZONELIST	4
+#define STAGE_POST_MM_INIT	5
+#define STAGE_POST_CONSOLE	6
+#define STAGE_REST_INIT		7
+
+#define STAGE_BASIC_SETUP	8
+#define STAGE_INITCALLS_ENTER	9
+
+/* stage = STAGE_INITCALL_LEVEL + initcall level (0..7) */
+#define STAGE_INITCALL_LEVEL	20
 
 #ifdef CONFIG_CHOPIN_CRUMB
-void __init chopin_crumb_init(void);
-void __init chopin_crumb_mark(u32 stage);
+void chopin_crumb_mark(u32 stage);
 #else
-static inline void chopin_crumb_init(void) { }
 static inline void chopin_crumb_mark(u32 stage) { }
 #endif
 
