@@ -55,21 +55,22 @@
  *		0x40000000..0x48200000. head.S probes 6-9 store to this very
  *		block that way and land in DRAM, which proves the path.
  *
- *	CRUMB_IDMAP_LAST < stage < CRUMB_LINEAR_FIRST
- *		neither the identity map nor the linear map reaches the
- *		block, so it is mapped through the fixmap with
- *		early_memremap(). That resolves in TTBR1, which is live
- *		throughout, and draws on the slots early_fixmap_init() and
- *		early_ioremap_init() set aside at the top of setup_arch().
- *		early_ioremap_reset() only runs after setup_arch() returns,
- *		so the whole interval is covered.
+ *	stage > CRUMB_IDMAP_LAST
+ *		the fixmap, via early_memremap(). That resolves in TTBR1,
+ *		which is live throughout, and draws on the slots
+ *		early_fixmap_init() and early_ioremap_init() set aside near
+ *		the top of setup_arch(). early_ioremap_reset() runs later,
+ *		but early_memremap() keeps working past it because it falls
+ *		back to __late_set_fixmap internally, so one channel covers
+ *		everything after the identity map is gone.
  *
- *	stage >= CRUMB_LINEAR_FIRST
- *		the linear map built by paging_init() is live, so __va()
- *		works. The block sits inside the /memory node and no DTB
- *		declares it reserved or no-map -- LK is what carves it out
- *		and passes the address on the command line -- so map_mem()
- *		covers it with PAGE_KERNEL.
+ * __va() is deliberately not used anywhere in this file. It depends on
+ * the linear map covering the block, which in turn depends on memblock
+ * not having the block marked no-map, and an observer must not be built
+ * on an assumption whose failure mode is a fault at the exact spot being
+ * investigated. Four dumps in a row stopped on the very first stage that
+ * would have used __va(), which is what a bad assumption there looks
+ * like: indistinguishable from the hang being chased.
  *
  * Nothing here may fault: the whole point is to observe a boot that dies
  * silently, and a fault in the observer would be indistinguishable from
@@ -133,7 +134,6 @@ struct chopin_crumb {
 static struct chopin_crumb crumb_stash[CRUMB_MAX];
 static u32 crumb_stash_cnt;
 static u32 crumb_reached;
-static void *crumb_fixmap;
 
 /*
  * dsb orders the stores; only an explicit clean pushes them to the point
@@ -169,6 +169,8 @@ void chopin_crumb_mark(u32 stage)
 {
 	struct chopin_crumb c;
 	void *tbl = NULL;
+	void *fix = NULL;
+	unsigned long len = 0;
 	u64 sp = (u64)(unsigned long)__builtin_frame_address(0);
 
 	if (stage > crumb_reached)
@@ -182,31 +184,34 @@ void chopin_crumb_mark(u32 stage)
 	if (stage <= CRUMB_IDMAP_LAST) {
 		c.flags = CRUMB_FLAG_IDMAP;
 		tbl = (void *)(unsigned long)CRUMB_TABLE;
-	} else if (stage >= CRUMB_LINEAR_FIRST) {
-		c.flags = CRUMB_FLAG_LINEAR;
-		tbl = __va(CRUMB_TABLE);
 	} else {
 		/*
-		 * Inside the window: the identity map is gone and the
-		 * linear map is not built yet. Reach the block through the
-		 * fixmap, which resolves in TTBR1 and is live here.
+		 * Past the identity map, reach the block through the fixmap.
+		 * It resolves in TTBR1 and does not depend on whether the
+		 * linear map happens to cover this block.
 		 *
-		 * The mapping is created once and kept: the window holds
-		 * only a few stages, the slot pool is far larger than one
-		 * mapping, and early_ioremap_reset() tears everything down
-		 * when setup_arch() returns anyway. Releasing it between
-		 * stages would only add a way for the observer to fail.
+		 * __va() is deliberately not used. Whether it works depends
+		 * on memblock not having the block marked no-map, and that
+		 * assumption must not live in the observer: if it is wrong
+		 * the probe faults and the boot stops right there, which
+		 * looks exactly like the hang that was being chased. Four
+		 * dumps in a row stopped on the step where this function
+		 * first called __va(), which is what that failure mode looks
+		 * like from the outside.
+		 *
+		 * The mapping is taken and released per call. early_memremap()
+		 * keeps working after early_ioremap_reset() -- it switches to
+		 * __late_set_fixmap internally -- but the slots it hands out
+		 * are reused, so a cached pointer would go stale.
 		 */
 		unsigned long start = CRUMB_TABLE & PAGE_MASK;
-		unsigned long len = PAGE_ALIGN(CRUMB_TABLE + CRUMB_MAX *
-				sizeof(struct chopin_crumb) - start);
 
-		if (!crumb_fixmap)
-			crumb_fixmap = early_memremap(start, len);
-
-		if (crumb_fixmap) {
+		len = PAGE_ALIGN(CRUMB_TABLE + CRUMB_MAX *
+				 sizeof(struct chopin_crumb) - start);
+		fix = early_memremap(start, len);
+		if (fix) {
 			c.flags = CRUMB_FLAG_FIXMAP;
-			tbl = (char *)crumb_fixmap + (CRUMB_TABLE - start);
+			tbl = (char *)fix + (CRUMB_TABLE - start);
 		}
 	}
 
@@ -223,4 +228,11 @@ void chopin_crumb_mark(u32 stage)
 
 	crumb_stash_one(&c);
 	crumb_replay(tbl);
+
+	/*
+	 * Give the slot back so the pool is not exhausted over the many
+	 * stages that run after this point.
+	 */
+	if (fix)
+		early_iounmap(fix, len);
 }
