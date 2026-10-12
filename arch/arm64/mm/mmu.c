@@ -28,7 +28,6 @@
 #include <linux/mman.h>
 #include <linux/nodemask.h>
 #include <linux/memblock.h>
-#include <linux/chopin_crumb.h>
 #include <linux/fs.h>
 #include <linux/io.h>
 #include <linux/mm.h>
@@ -700,22 +699,11 @@ static void __init map_kernel(pgd_t *pgdp)
  */
 void __init paging_init(void)
 {
-	phys_addr_t pgd_phys;
-	pgd_t *pgdp;
-
-	chopin_crumb_mark(STAGE_PI_ENTER);
-
-	pgd_phys = early_pgtable_alloc();
-	chopin_crumb_mark(STAGE_PI_ALLOC);
-
-	pgdp = pgd_set_fixmap(pgd_phys);
-	chopin_crumb_mark(STAGE_PI_SET_FIXMAP);
+	phys_addr_t pgd_phys = early_pgtable_alloc();
+	pgd_t *pgdp = pgd_set_fixmap(pgd_phys);
 
 	map_kernel(pgdp);
-	chopin_crumb_mark(STAGE_PI_MAP_KERNEL);
-
 	map_mem(pgdp);
-	chopin_crumb_mark(STAGE_PI_MAP_MEM);
 
 	/*
 	 * We want to reuse the original swapper_pg_dir so we don't have to
@@ -725,61 +713,11 @@ void __init paging_init(void)
 	 *
 	 * To do this we need to go via a temporary pgd.
 	 */
-	/*
-	 * cpu_replace_ttbr1(), expanded so it can be observed from inside.
-	 *
-	 * Every dump so far stopped between STAGE_PI_MAP_MEM and the next
-	 * stage, and this call is the only thing in that gap. Four dumps
-	 * with three different implementations of the surrounding code
-	 * stopped in the same place, so instead of guessing which of its
-	 * three steps fails, each is bracketed.
-	 *
-	 * The channel is forced to the identity map between install and
-	 * uninstall. cpu_install_idmap() points TTBR0 at idmap_pg_dir,
-	 * which head.S extends to cover 0x48090000, while TTBR1 holds the
-	 * new pgd that has no fixmap entries yet -- so the range rule that
-	 * would pick the fixmap there is wrong, and only this caller knows
-	 * it.
-	 */
-	chopin_crumb_mark_idmap(STAGE_TTBR1_ENTER, false);
-
-	cpu_install_idmap();
-	chopin_crumb_mark_idmap(STAGE_TTBR1_IDMAP_IN, true);
-
-	/*
-	 * Must be called through its physical address: it runs with the
-	 * identity map active, which is the whole point of the dance. The
-	 * extern lives inside cpu_replace_ttbr1() upstream, so it is
-	 * repeated here rather than moved, to keep the diff to mmu.c.
-	 */
-	{
-		extern void idmap_cpu_replace_ttbr1(phys_addr_t new_pgd);
-
-		((void (*)(phys_addr_t))__pa_function(idmap_cpu_replace_ttbr1))
-			(pgd_phys);
-	}
-	chopin_crumb_mark_idmap(STAGE_TTBR1_REPLACED, true);
-
-	/*
-	 * Back on the fixmap: cpu_uninstall_idmap() has just replaced
-	 * TTBR0 with the reserved tables, so the identity map is gone
-	 * again and TTBR1 holds the new pgd, which map_kernel() gave the
-	 * fixmap's top-level entry.
-	 */
-	cpu_uninstall_idmap();
-	chopin_crumb_mark_idmap(STAGE_TTBR1_IDMAP_OUT, false);
-
-	chopin_crumb_mark(STAGE_PI_TTBR1_TEMP);
-
+	cpu_replace_ttbr1(__va(pgd_phys));
 	memcpy(swapper_pg_dir, pgdp, PGD_SIZE);
-	chopin_crumb_mark(STAGE_PI_COPY_PGD);
-
 	cpu_replace_ttbr1(lm_alias(swapper_pg_dir));
-	chopin_crumb_mark(STAGE_PI_TTBR1_SWAPPER);
 
 	pgd_clear_fixmap();
-	chopin_crumb_mark(STAGE_PI_CLEAR_FIXMAP);
-
 	memblock_free(pgd_phys, PAGE_SIZE);
 
 	/*
@@ -789,8 +727,6 @@ void __init paging_init(void)
 	memblock_free(__pa_symbol(swapper_pg_dir) + PAGE_SIZE,
 		      __pa_symbol(swapper_pg_end) - __pa_symbol(swapper_pg_dir)
 		      - PAGE_SIZE);
-
-	chopin_crumb_mark(STAGE_PI_DONE);
 }
 
 /*

@@ -116,38 +116,13 @@ pe_header:
 	 *  x24        __primary_switch() .. relocate_kernel()
 	 *                                        current RELR displacement
 	 */
-/*
- * The breadcrumb target below is 0x48090800, hardcoded as movz/movk
- * because head.S cannot include the C header. It must match
- * CRUMB_RAMOOPS + 0x800 in drivers/misc/chopin-crumb/chopin_crumb.c,
- * which picks up from wherever this left off.
- */
-
 ENTRY(stext)
 	bl	preserve_boot_args
-	movz	x2, #0x0800		// addr low
-	movk	x2, #0x4809, lsl #16	// 0x48090800
-	movz	x3, #0x4b41		// magic low
-	movk	x3, #0x4442, lsl #16	// magic high
-	str	x3, [x2]
-	/* probe 1: stext entry --- */
 	bl	el2_setup			// Drop to EL1, w0=cpu_boot_mode
-	movz	x2, #0x0810		// addr low
-	movk	x2, #0x4809, lsl #16	// 0x48090810
-	movz	x3, #0x4b42		// magic low
-	movk	x3, #0x4442, lsl #16	// magic high
-	str	x3, [x2]
-	/* probe 2: el2_setup done, at EL1 --- */
 	adrp	x23, __PHYS_OFFSET
 	and	x23, x23, MIN_KIMG_ALIGN - 1	// KASLR offset, defaults to 0
 	bl	set_cpu_boot_mode_flag
 	bl	__create_page_tables
-	movz	x2, #0x0820		// addr low
-	movk	x2, #0x4809, lsl #16	// 0x48090820
-	movz	x3, #0x4b43		// magic low
-	movk	x3, #0x4442, lsl #16	// magic high
-	str	x3, [x2]
-	/* probe 3: page tables built --- */
 	/*
 	 * The following calls CPU setup code, see arch/arm64/mm/proc.S for
 	 * details.
@@ -155,18 +130,6 @@ ENTRY(stext)
 	 * the TCR will have been set.
 	 */
 	bl	__cpu_setup			// initialise processor
-	movz	x2, #0x0830		// addr low
-	movk	x2, #0x4809, lsl #16	// 0x48090830
-	movz	x3, #0x4b44		// magic low
-	movk	x3, #0x4442, lsl #16	// magic high
-	str	x3, [x2]
-	/* probe 4: CPU configured, pre-MMU --- */
-	movz	x2, #0x0840		// addr low
-	movk	x2, #0x4809, lsl #16	// 0x48090840
-	movz	x3, #0x4b45		// magic low
-	movk	x3, #0x4442, lsl #16	// magic high
-	str	x3, [x2]
-	/* probe 5: about to enable MMU --- */
 	b	__primary_switch
 ENDPROC(stext)
 
@@ -409,27 +372,32 @@ __create_page_tables:
 	mov	x5, x3				// __pa(__idmap_text_start)
 	adr_l	x6, __idmap_text_end		// __pa(__idmap_text_end)
 	/*
-	 * Extend the identity map up to 0x48200000.
+	 * Extend the identity map to cover ramoops at 0x48090000.
 	 *
-	 * As shipped this covers only __idmap_text_start to
-	 * __idmap_text_end, and vmlinux.lds.S caps that section at 4K, so
-	 * once the MMU is on almost nothing outside the image is reachable.
-	 * ramoops at 0x48090000 is far outside it, which is what made probe
-	 * 17 abort: the store to 0x48090910 had no descriptor in
-	 * idmap_pg_dir, and vbar_el1 is not loaded until
-	 * __primary_switched, so the translation fault had nowhere to vector.
+	 * As shipped this maps only __idmap_text_start to __idmap_text_end,
+	 * and vmlinux.lds.S caps that section at 4K, so once __enable_mmu
+	 * does msr sctlr_el1 almost nothing outside the kernel image is
+	 * reachable: the linear map does not exist until paging_init() has
+	 * run, and vbar_el1 is not loaded until __primary_switched, so a
+	 * fault out here has nowhere to vector and the CPU spins until the
+	 * watchdog expires.
 	 *
-	 * Reaching ramoops after the MMU needs either this map or the linear
-	 * map, and the linear map does not exist yet either, since
-	 * paging_init() has not run this early in the boot.
+	 * This matters to the crash path, not to normal operation. pstore
+	 * and ramoops reach the block through ioremap() once the allocator
+	 * is up, so a boot that gets that far does not need this. But a
+	 * boot that dies before paging_init() can still want to write a
+	 * panic record, and without the block being reachable that write
+	 * faults and takes the record with it. Four rounds of debugging
+	 * were spent on probes that were themselves killing the kernel this
+	 * way, which is exactly the failure mode this avoids.
 	 *
-	 * Both ends land in the table that is already there, so no new
+	 * Both ends land in tables that are already allocated, so no new
 	 * pages are consumed. With VA_BITS=39, 4K pages and PA=48:
 	 * IDMAP_PGTABLE_LEVELS is 3 and SWAPPER_PGTABLE_LEVELS is 2, so
 	 * map_memory emits a PGD entry and a PMD table but no PUD level.
 	 * 0x40000000 and 0x48200000 are PMD indices 512 and 576, in the
 	 * same PMD page (page 1), reached through the same PGD entry (1),
-	 * so the 65 extra descriptors all fit inside IDMAP_DIR_SIZE.
+	 * so the extra descriptors all fit inside IDMAP_DIR_SIZE.
 	 */
 	movz	x6, #0x0000
 	movk	x6, #0x4820, lsl #16
@@ -475,14 +443,6 @@ __primary_switched:
 	add	sp, x4, #THREAD_SIZE
 	adr_l	x5, init_task
 	msr	sp_el0, x5			// Save thread_info
-	movz	x2, #0x0850
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b46
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 6: primary_switched entered, MMU on --- */
 
 	adr_l	x8, vectors			// load VBAR_EL1 with virtual
 	msr	vbar_el1, x8			// vector table address
@@ -507,14 +467,6 @@ __primary_switched:
 	adr_l	x2, __bss_stop
 	sub	x2, x2, x0
 	bl	__pi_memset
-	movz	x2, #0x0860
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b47
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 7: BSS cleared --- */
 	dsb	ishst				// Make zero page visible to PTW
 
 #ifdef CONFIG_KASAN
@@ -531,25 +483,9 @@ __primary_switched:
 	ret					// to __primary_switch()
 0:
 #endif
-	movz	x2, #0x0870
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b48
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 8: KASLR decided --- */
 	add	sp, sp, #16
 	mov	x29, #0
 	mov	x30, #0
-	movz	x2, #0x0880
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b49
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 9: about to call start_kernel --- */
 	b	start_kernel
 ENDPROC(__primary_switched)
 
@@ -865,48 +801,16 @@ ENTRY(__enable_mmu)
 	ubfx	x2, x1, #ID_AA64MMFR0_TGRAN_SHIFT, 4
 	cmp	x2, #ID_AA64MMFR0_TGRAN_SUPPORTED
 	b.ne	__no_granule_support
-	movz	x5, #0x08e0
-	movk	x5, #0x4809, lsl #16
-	mov	x6, #0x4b4e
-	movk	x6, #0x4442, lsl #16
-	str	x6, [x5]
-	dc	cvac, x5
-	dsb	sy
-	/* probe 14: TGRAN ok, MMU still off --- */
 	update_early_cpu_boot_status 0, x1, x2
-	movz	x5, #0x08f0
-	movk	x5, #0x4809, lsl #16
-	mov	x6, #0x4b4f
-	movk	x6, #0x4442, lsl #16
-	str	x6, [x5]
-	dc	cvac, x5
-	dsb	sy
-	/* probe 15: early boot status recorded --- */
 	adrp	x1, idmap_pg_dir
 	adrp	x2, swapper_pg_dir
 	phys_to_ttbr x3, x1
 	phys_to_ttbr x4, x2
-	movz	x5, #0x0900
-	movk	x5, #0x4809, lsl #16
-	mov	x6, #0x4b50
-	movk	x6, #0x4442, lsl #16
-	str	x6, [x5]
-	dc	cvac, x5
-	dsb	sy
-	/* probe 16: ttbr computed, MMU still off --- */
 	msr	ttbr0_el1, x3			// load TTBR0
 	msr	ttbr1_el1, x4			// load TTBR1
 	isb
 	msr	sctlr_el1, x0
 	isb
-	movz	x5, #0x0910
-	movk	x5, #0x4809, lsl #16
-	mov	x6, #0x4b51
-	movk	x6, #0x4442, lsl #16
-	str	x6, [x5]
-	dc	cvac, x5
-	dsb	sy
-	/* probe 17: MMU enabled --- */
 	/*
 	 * Invalidate the local I-cache so that any instructions fetched
 	 * speculatively from the PoC are discarded, since they may have
@@ -1059,41 +963,17 @@ ENDPROC(__relocate_kernel)
 #endif
 
 __primary_switch:
-	movz	x2, #0x0890
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b4a
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 10: __primary_switch entered --- */
 #ifdef CONFIG_RANDOMIZE_BASE
 	mov	x19, x0				// preserve new SCTLR_EL1 value
 	mrs	x20, sctlr_el1			// preserve old SCTLR_EL1 value
 #endif
 
 	bl	__enable_mmu
-	movz	x2, #0x08d0
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b4b
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 11: MMU on, identity map live --- */
 #ifdef CONFIG_RELOCATABLE
 #ifdef CONFIG_RELR
 	mov	x24, #0				// no RELR displacement yet
 #endif
 	bl	__relocate_kernel
-	movz	x2, #0x08b0
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b4c
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 12: relocated --- */
 #ifdef CONFIG_RANDOMIZE_BASE
 	ldr	x8, =__primary_switched
 	adrp	x0, __PHYS_OFFSET
@@ -1122,14 +1002,6 @@ __primary_switch:
 	bl	__relocate_kernel
 #endif
 #endif
-	movz	x2, #0x08c0
-	movk	x2, #0x4809, lsl #16
-	mov	x3, #0x4b4d
-	movk	x3, #0x4442, lsl #16
-	str	x3, [x2]
-	dc	cvac, x2
-	dsb	sy
-	/* probe 13: about to branch to __primary_switched --- */
 	ldr	x8, =__primary_switched
 	adrp	x0, __PHYS_OFFSET
 	br	x8

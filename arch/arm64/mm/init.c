@@ -29,7 +29,6 @@
 #include <linux/initrd.h>
 #include <linux/gfp.h>
 #include <linux/memblock.h>
-#include <linux/chopin_crumb.h>
 #include <linux/sort.h>
 #include <linux/of.h>
 #include <linux/of_fdt.h>
@@ -373,7 +372,6 @@ void __init arm64_memblock_init(void)
 
 	/* Handle linux,usable-memory-range property */
 	fdt_enforce_memory_region();
-	chopin_crumb_mark(STAGE_MB_FDT_ENFORCE);
 
 	/* Remove memory above our supported physical address size */
 	memblock_remove(1ULL << PHYS_MASK_SHIFT, ULLONG_MAX);
@@ -390,7 +388,6 @@ void __init arm64_memblock_init(void)
 	 */
 	memstart_addr = round_down(memblock_start_of_DRAM(),
 				   ARM64_MEMSTART_ALIGN);
-	chopin_crumb_mark(STAGE_MB_MEMSTART);
 
 	/*
 	 * Remove the memory that we will not be able to cover with the
@@ -477,9 +474,7 @@ void __init arm64_memblock_init(void)
 	}
 #endif
 
-	chopin_crumb_mark(STAGE_MB_PRE_RESERVED);
 	early_init_fdt_scan_reserved_mem();
-	chopin_crumb_mark(STAGE_MB_POST_RESERVED);
 
 	/* 4GB maximum for 32-bit only capable devices */
 	if (IS_ENABLED(CONFIG_ZONE_DMA32))
@@ -493,9 +488,7 @@ void __init arm64_memblock_init(void)
 
 	high_memory = __va(memblock_end_of_DRAM() - 1) + 1;
 
-	chopin_crumb_mark(STAGE_MB_PRE_CMA);
 	dma_contiguous_reserve(arm64_dma_phys_limit);
-	chopin_crumb_mark(STAGE_MB_POST_CMA);
 
 	memblock_allow_resize();
 }

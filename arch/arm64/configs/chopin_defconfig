@@ -88,7 +88,6 @@ CONFIG_ZRAM_WRITEBACK=y
 CONFIG_BLK_DEV_LOOP_MIN_COUNT=16
 CONFIG_USB_SWITCH_ET7480=y
 CONFIG_GPIO_TESTING_MODE=y
-CONFIG_CHOPIN_CRUMB=y
 CONFIG_ANDROID_DEFAULT_SETTING=y
 CONFIG_MTK_ANDROID_DEFAULT_SETTING=y
 CONFIG_MTK_PLATFORM="mt6885"
@@ -455,15 +454,11 @@ CONFIG_THINLTO=y
 CONFIG_CFI_CLANG=y
 CONFIG_SHADOW_CALL_STACK=y
 
-# VHE stays on, matching both the stock 4.14 chopin_defconfig and the
-# 4.19 Agate defconfig.
-#
-# This had been turned off on a wrong theory and has been restored. It
-# is worth keeping because CONFIG_ARM64_VHE selects ARM64_VA_BITS_48
-# over ARM64_VA_BITS_39, and __create_page_tables in head.S builds the
-# identity map differently for each, the VA_BITS < 48 case adding an
-# extra translation level. GenieZone also lays out a 48-bit identity map
-# for the Linux context, 0x0 to 0x1bfffffff.
+# Matches the stock 4.14 chopin_defconfig. VHE is inert on this platform:
+# head.S el2_setup only takes the VHE branch when it starts at EL2, and
+# GenieZone hands control over at EL1h, so the kernel runs at EL1 either
+# way. It does not select a wider VA space -- CONFIG_ARM64_VA_BITS is 39
+# here with VHE on, not 48.
 CONFIG_ARM64_VHE=1
 # CONFIG_ARM64_SVE is not set
 # CONFIG_ARM64_LSE_ATOMICS is not set

@@ -569,6 +569,26 @@ EXPORT_SYMBOL_GPL(mt_usb_disconnect_v1);
 	extern bool mtk_mt_pmic_get_vcdt(void);
 #endif
 
+static void mtk_usb_extcon_dev_conn_remove(void *data)
+{
+	struct device_connection *con = data;
+
+	/*
+	 * id is only non-NULL once device_connection_add() has actually
+	 * linked the node, so this is a no-op in the case where
+	 * devm_add_action_or_reset() failed and ran the action early.
+	 */
+	if (con->id) {
+		device_connection_remove(con);
+		/*
+		 * Cleared so the devm action and the driver's own .remove
+		 * cannot both run the removal. Unbind calls .remove first
+		 * and then releases devres, so both paths do execute.
+		 */
+		con->id = NULL;
+	}
+}
+
 static int mtk_usb_extcon_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -615,6 +635,49 @@ static int mtk_usb_extcon_probe(struct platform_device *pdev)
 	extcon->dev_conn.endpoint[0] = kasprintf(GFP_KERNEL,
 				"%s-role-switch", dev_name(&conn_pdev->dev));
 	extcon->dev_conn.endpoint[1] = dev_name(extcon->dev);
+
+	/*
+	 * Registering the connection has to be undone before the probe
+	 * returns, on every path.
+	 *
+	 * Below this point the probe can still fail and be retried, and
+	 * usb_role_switch_get() does fail on this device: the DT has no
+	 * port node under /extcon_usb, so the lookup returns -EPROBE_DEFER
+	 * and the probe is queued again. devcon_list has no idea any of
+	 * that happened. devres_release_all() frees the devm_kzalloc'd
+	 * extcon on failure, but the list entry lives inside that object
+	 * and device_connection_add() does not put anything on the unwind
+	 * stack -- so the list keeps a pointer to freed memory, and the
+	 * retry adds the same node a second time.
+	 *
+	 * With CONFIG_DEBUG_LIST that second add trips __list_add_valid and
+	 * the kernel panics at 6.89s on every boot:
+	 *
+	 *   list_add corruption. prev->next should be ...
+	 *   __list_add_valid+0xb4/0xb8
+	 *   device_connection_add+0x48/0x78
+	 *   mtk_usb_extcon_probe+0x134/0x7f4
+	 *
+	 * Without DEBUG_LIST the add would succeed and leave devcon_list
+	 * corrupt instead -- worse, because it would stay silent until the
+	 * next usb_role_switch_get() walked it.
+	 *
+	 * devm_add_action_or_reset() ties the removal to the device, so the
+	 * cleanup happens exactly once whether the probe fails or the
+	 * driver is later unbound. The action is registered first so that a
+	 * failure to register it cannot leak the connection.
+	 */
+	ret = devm_add_action_or_reset(dev, mtk_usb_extcon_dev_conn_remove,
+				       &extcon->dev_conn);
+	if (ret)
+		return ret;
+
+	/*
+	 * id doubles as "this connection is in devcon_list". It is set on
+	 * the line before the add, so that a failure to register the action
+	 * above -- which runs the action immediately -- cannot reach a
+	 * list_del() on a node that was never linked.
+	 */
 	extcon->dev_conn.id = "usb-role-switch";
 	device_connection_add(&extcon->dev_conn);
 
@@ -697,8 +760,12 @@ static int mtk_usb_extcon_remove(struct platform_device *pdev)
 {
 	struct mtk_extcon_info *extcon = platform_get_drvdata(pdev);
 
-	if (extcon->dev_conn.id)
-		device_connection_remove(&extcon->dev_conn);
+	/*
+	 * The devm action registered in probe would do this too, a moment
+	 * later; the helper is idempotent so it does not matter which gets
+	 * there first.
+	 */
+	mtk_usb_extcon_dev_conn_remove(&extcon->dev_conn);
 
 	return 0;
 }
