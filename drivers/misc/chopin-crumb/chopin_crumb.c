@@ -89,9 +89,26 @@
 #define CRUMB_TABLE		(0x48090000UL + 0x920UL)
 
 /*
- * A record is 24 bytes, not 16: four u32 fields occupy the first 16 and
- * sp needs 8-byte alignment, so sizeof() rounds the struct up. Indexing
- * goes through tbl[stage] so the compiler applies the real size.
+ * The boot counter, deliberately outside the table so that wiping the
+ * table cannot wipe it too. It is the one field that is written by a
+ * boot and read by the next one, which is what makes a stale table
+ * distinguishable from a fresh one: a dump whose records all carry an
+ * older seq than the counter means this boot never reached stage 1 and
+ * every record in the block is left over from the previous boot.
+ *
+ * Five dumps in a row produced a byte-identical table across three
+ * different kernel versions, which is exactly what stale data looks
+ * like -- so until this counter existed, "the kernel dies at stage 21"
+ * and "the kernel never wrote anything this time" were the same
+ * observation.
+ */
+#define CRUMB_SEQ		(0x48090000UL + 0x1600UL)
+
+/*
+ * A record is 32 bytes: six u32 fields then sp, which needs 8-byte
+ * alignment, so one u32 of padding. Indexing goes through tbl[i] rather
+ * than pointer arithmetic on a byte count, so the compiler applies the
+ * real size everywhere.
  */
 #define CRUMB_MAX		48
 
@@ -102,9 +119,11 @@
 
 struct chopin_crumb {
 	u32 magic;
+	u32 seq;	/* which boot wrote this record */
 	u32 stage;
 	u32 reached;	/* highest stage seen so far */
 	u32 flags;	/* which mapping the record went through */
+	u32 pad;
 	u64 sp;
 };
 
@@ -115,6 +134,7 @@ struct chopin_crumb {
 static struct chopin_crumb crumb_stash[CRUMB_MAX];
 static u32 crumb_stash_cnt;
 static u32 crumb_reached;
+static u32 crumb_boot_seq;
 
 /*
  * dsb orders the stores; only an explicit clean pushes them to the point
@@ -127,6 +147,37 @@ static void crumb_flush(void *addr, size_t len)
 {
 	__clean_dcache_area_poc(addr, len);
 	dsb(sy);
+}
+
+/*
+ * Bump the boot counter and wipe the table. Called once, from stage 1,
+ * which runs at the top of start_kernel() while the identity map that
+ * head.S installed still covers the block -- so this touches the block
+ * with plain stores, no fixmap and no allocator.
+ *
+ * The wipe is what makes the next dump readable: a boot that dies
+ * between here and the first record leaves an all-zero table, which
+ * cannot be confused with the previous boot's leftovers. The counter is
+ * kept outside the wiped range for the same reason.
+ *
+ * A counter that reads as 0 (fresh RAM, cold boot) or as something
+ * implausible (random RAM contents) is reset rather than incremented, so
+ * the value stays a small monotonic number instead of drifting to
+ * noise.
+ */
+static void crumb_boot_begin(void)
+{
+	u32 *seq = (u32 *)(unsigned long)CRUMB_SEQ;
+	void *tbl = (void *)(unsigned long)CRUMB_TABLE;
+	u32 v = *seq;
+
+	*seq = (v == 0 || v > 100000u) ? 1u : v + 1u;
+	crumb_boot_seq = *seq;
+
+	memset(tbl, 0, CRUMB_MAX * sizeof(struct chopin_crumb));
+
+	crumb_flush(tbl, CRUMB_MAX * sizeof(struct chopin_crumb));
+	crumb_flush(seq, sizeof(*seq));
 }
 
 static void crumb_stash_one(const struct chopin_crumb *c)
@@ -202,10 +253,14 @@ void chopin_crumb_mark_idmap(u32 stage, bool force_idmap)
 	struct chopin_crumb c;
 	u64 sp = (u64)(unsigned long)__builtin_frame_address(0);
 
+	if (stage == STAGE_START_KERNEL)
+		crumb_boot_begin();
+
 	if (stage > crumb_reached)
 		crumb_reached = stage;
 
 	c.magic = CRUMB_MAGIC;
+	c.seq = crumb_boot_seq;
 	c.stage = stage;
 	c.reached = crumb_reached;
 	c.sp = sp;
