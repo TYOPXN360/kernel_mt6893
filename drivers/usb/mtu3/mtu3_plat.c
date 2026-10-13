@@ -472,12 +472,36 @@ static int mtu3_probe(struct platform_device *pdev)
 		return -ENOTSUPP;
 	}
 
-	ret = device_rename(dev, node->name);
-	if (ret)
-		dev_info(&pdev->dev, "failed to rename\n");
-	/* fix uaf(use after free) issue: backup pdev->name,
-	 * device_rename will free pdev->name
+	/*
+	 * Name the controller "musb-hdrc", as the downstream 4.14 driver
+	 * this platform shipped with did.
+	 *
+	 * The name is not cosmetic. When the gadget is registered,
+	 * usb_add_gadget_udc_release() names the UDC after its parent:
+	 *
+	 *     dev_set_name(&udc->dev, "%s", kobject_name(&parent->kobj));
+	 *
+	 * so whatever this device is called becomes /sys/class/udc/<name>.
+	 * Upstream names it after the DT node, which here is "usb0", giving
+	 * /sys/class/udc/usb0.
+	 *
+	 * Android's init reads /sys/class/udc and copies the first entry
+	 * into sys.usb.controller (system/core/init/init.cpp), and the
+	 * chopin init scripts then bind the gadget with
+	 *
+	 *     write /config/usb_gadget/g1/UDC ${sys.usb.controller}
+	 *
+	 * But init.chopin.usb.rc hardcodes setprop sys.usb.controller
+	 * "musb-hdrc", so a controller called usb0 does not match and the
+	 * write fails. The gadget never binds, adbd never starts, and the
+	 * port does not enumerate at all -- which is also why charging
+	 * detection looks dead; the charger stack needs the port up.
+	 *
+	 * dev_set_name() before the device is registered is safe and is
+	 * what the 4.14 driver did. Keeping the pdev->name assignment: it
+	 * guards against the kobject name being freed under us later.
 	 */
+	dev_set_name(dev, "musb-hdrc");
 	pdev->name = pdev->dev.kobj.name;
 
 	platform_set_drvdata(pdev, ssusb);
