@@ -366,6 +366,71 @@ static void __init fdt_enforce_memory_region(void)
 		memblock_cap_memory_range(reg.base, reg.size);
 }
 
+/*
+ * The bootloader keeps a pstore block at a fixed DRAM address and tells the
+ * kernel about it through the command line:
+ *
+ *   ramoops.mem_address=0x48090000 ramoops.mem_size=0xe0000
+ *   ramoops.pmsg_size=0x10000 ramoops.console_size=0x40000
+ *
+ * Those parameters reach the ramoops module parameters, and ramoops_init()
+ * will even build its own platform device from them (ramoops_register_dummy),
+ * so in principle pstore works without any DT support. What stops it is that
+ * the range is not reserved in memblock: LK reserved it on its own side, the
+ * kernel's memory map never learned about it, so the block stays inside
+ * System RAM. persistent_ram_iomap() then calls request_mem_region() on it,
+ * which fails against a busy System RAM resource, and ramoops gives up:
+ *
+ *   persistent_ram: request mem region (0xe0000@0x48090000) failed
+ *
+ * Declaring it in the DT under /reserved-memory is the usual fix, but it does
+ * not work here: LK parses the same DT and runs its own conflict check against
+ * the regions it manages. A ramoops node at 0x48090000 trips it --
+ *
+ *   DTS node:ramoops@48090000 reserved start: 0x48090000 size: 0xe0000
+ *   reserved_memory_conflict_check:1707 failed i:16 0:1:1:1
+ *
+ * -- and the failure is early enough that the boot does not reach the point
+ * where it would otherwise initialise, losing features that were working.
+ *
+ * Reserving from the kernel side avoids that entirely. LK never sees memblock;
+ * the reservation happens after the DT has been unflattened but before
+ * memblock_allow_resize(), so request_mem_region() finds the range free later
+ * on and pstore comes up with the parameters LK already passed.
+ *
+ * The addresses match what LK reports as pstore_addr/pstore_size. The region
+ * is deliberately not marked nomap: ramoops needs ioremap_wc() on it, and
+ * no-map would keep it out of the linear map as well, which is both
+ * unnecessary and a way to make the block unreadable if anything else still
+ * walks it through the linear mapping.
+ */
+#define MTK_PSTORE_ADDR 0x48090000ULL
+#define MTK_PSTORE_SIZE 0xe0000ULL
+
+static int __init mtk_reserve_pstore(void)
+{
+	phys_addr_t start = MTK_PSTORE_ADDR;
+	phys_addr_t size = MTK_PSTORE_SIZE;
+
+	if (!memblock_is_region_memory(start, size)) {
+		pr_warn("pstore: 0x%llx+0x%llx is not memory, skipping reserve\n",
+			(unsigned long long)start, (unsigned long long)size);
+		return 0;
+	}
+
+	if (memblock_is_region_reserved(start, size)) {
+		pr_info("pstore: 0x%llx+0x%llx already reserved\n",
+			(unsigned long long)start, (unsigned long long)size);
+		return 0;
+	}
+
+	memblock_reserve(start, size);
+	pr_info("pstore: reserved 0x%llx+0x%llx for ramoops\n",
+		(unsigned long long)start, (unsigned long long)size);
+
+	return 0;
+}
+
 void __init arm64_memblock_init(void)
 {
 	const s64 linear_region_size = -(s64)PAGE_OFFSET;
@@ -489,6 +554,8 @@ void __init arm64_memblock_init(void)
 	high_memory = __va(memblock_end_of_DRAM() - 1) + 1;
 
 	dma_contiguous_reserve(arm64_dma_phys_limit);
+
+	mtk_reserve_pstore();
 
 	memblock_allow_resize();
 }
