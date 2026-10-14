@@ -304,3 +304,179 @@ static int __init chopin_crumb_flush_init(void)
 	return 0;
 }
 late_initcall(chopin_crumb_flush_init);
+
+/*
+ * Capture trigger on five short presses of volume-down.
+ *
+ * A boot that stops halfway leaves no way to capture it. Holding the
+ * power key is the only way out on this phone, and that cuts power: the
+ * next power-up clears DRAM, which is where the kernel log and the
+ * pstore block live. Every dump taken after such a press came back
+ * empty, which is why several rounds of USB work were done without ever
+ * reading a message the kernel printed.
+ *
+ * The stall being chased is not a wedged task either -- by the time the
+ * screen sits on the logo, init is alive and looping on a failing
+ * command, so a hung-task or soft-lockup watchshdog never fires. What is
+ * needed is a trigger that only requires the kernel to be running,
+ * which is what a key handler provides: the keypad keeps generating
+ * events as long as its interrupt is served, and that holds through a
+ * userspace stall.
+ *
+ * So: five short presses, then dump the log and hand control back to the
+ * bootloader in software. A software re-entry keeps power up, so DRAM
+ * survives and kmsg_dump() copies the log into pstore on the way out.
+ * The log lands in the block LK already exports to the expdb partition,
+ * so the next boot reads it back without the phone ever losing power.
+ *
+ * Volume-down rather than volume-up or power: the keypad reports all of
+ * them, but volume-down is the one that is not otherwise load-bearing
+ * during boot. Power is held for a hardware reset and volume-up is held
+ * for the bootloader menu, so neither can be used for this.
+ *
+ * A plain input_handler rather than a hook in the keypad driver: it
+ * attaches to whatever device reports the key, needs no knowledge of the
+ * keypad hardware, and leaves a working driver untouched.
+ */
+
+#include <linux/slab.h>
+#include <linux/input.h>
+#include <linux/kmsg_dump.h>
+#include <linux/reboot.h>
+#include <linux/delay.h>
+#include <linux/workqueue.h>
+
+#define CRUMB_KEY		KEY_VOLUMEDOWN
+#define CRUMB_PRESSES		5
+/* Long enough to be deliberate, short enough to stay convenient. */
+#define CRUMB_WINDOW_MS		3000
+
+static unsigned int crumb_presses;
+static unsigned long crumb_first_ms;
+
+/*
+ * Runs off the input event path. Both the dump and the reboot do things
+ * that must not happen with the keypad spinlock held, and the input core
+ * calls the event callback from the interrupt handler.
+ */
+static void crumb_trigger(struct work_struct *w)
+{
+	pr_emerg("mediatek-crumb: five presses, dumping log before re-entry\n");
+
+	/*
+	 * KMSG_DUMP_OOPS is the reason pstore records as dmesg-ramoops-N,
+	 * the record that reads back as a whole log rather than as a crash
+	 * report. It is not a panic, so nothing else fires from it.
+	 */
+	kmsg_dump(KMSG_DUMP_OOPS);
+
+	/* Give the store a moment to drain before control leaves. */
+	mdelay(200);
+
+	emergency_restart();
+}
+
+static DECLARE_WORK(crumb_work, crumb_trigger);
+
+static void crumb_event(struct input_handle *handle, unsigned int type,
+			unsigned int code, int value)
+{
+	unsigned long now;
+
+	if (type != EV_KEY || code != CRUMB_KEY)
+		return;
+
+	if (!value)
+		return;
+
+	now = jiffies;
+
+	/* A press after the window closed starts a fresh count. */
+	if (!crumb_presses ||
+	    time_after(now,
+		       crumb_first_ms + msecs_to_jiffies(CRUMB_WINDOW_MS))) {
+		crumb_first_ms = now;
+		crumb_presses = 0;
+	}
+
+	crumb_presses++;
+
+	if (crumb_presses >= CRUMB_PRESSES) {
+		crumb_presses = 0;
+		schedule_work(&crumb_work);
+	}
+}
+
+static bool crumb_filter(struct input_handle *handle, unsigned int type,
+			 unsigned int code, int value)
+{
+	if (type != EV_KEY || code != CRUMB_KEY)
+		return false;
+
+	/*
+	 * Swallow the key once the trigger is armed so userspace does not
+	 * also act on it. Until then it passes through: volume-down is
+	 * still an ordinary key while the count is building.
+	 */
+	return crumb_presses >= CRUMB_PRESSES;
+}
+
+static int crumb_connect(struct input_handler *handler, struct input_dev *dev,
+			 const struct input_device_id *id)
+{
+	struct input_handle *handle;
+	int error;
+
+	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+	if (!handle)
+		return -ENOMEM;
+
+	handle->dev = dev;
+	handle->handler = handler;
+	handle->name = "chopin-crumb";
+
+	error = input_register_handle(handle);
+	if (error) {
+		kfree(handle);
+		return error;
+	}
+
+	error = input_open_device(handle);
+	if (error) {
+		input_unregister_handle(handle);
+		kfree(handle);
+		return error;
+	}
+
+	return 0;
+}
+
+static void crumb_disconnect(struct input_handle *handle)
+{
+	input_close_device(handle);
+	input_unregister_handle(handle);
+	kfree(handle);
+}
+
+static const struct input_device_id crumb_ids[] = {
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+		.evbit = { BIT_MASK(EV_KEY) },
+	},
+	{ },
+};
+
+static struct input_handler crumb_handler = {
+	.event		= crumb_event,
+	.filter		= crumb_filter,
+	.connect	= crumb_connect,
+	.disconnect	= crumb_disconnect,
+	.name		=	"chopin-crumb",
+	.id_table	= crumb_ids,
+};
+
+static int __init chopin_crumb_key_init(void)
+{
+	return input_register_handler(&crumb_handler);
+}
+device_initcall(chopin_crumb_key_init);

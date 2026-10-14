@@ -61,4 +61,5 @@ obj-$(CONFIG_MISC_RTSX)		+= cardreader/
 obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
 obj-$(CONFIG_MI_GAMEKEY) += mi_gamekey.o
 obj-y				+= mediatek/
+obj-$(CONFIG_CHOPIN_CRUMB)	+= chopin-crumb/
 obj-$(CONFIG_GPIO_TESTING_MODE)	+= gpio-testing-mode.o
