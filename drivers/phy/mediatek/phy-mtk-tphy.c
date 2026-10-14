@@ -2401,6 +2401,34 @@ static int mtk_tphy_probe(struct platform_device *pdev)
 		struct mtk_phy_instance *instance;
 		struct phy *phy;
 
+		/*
+		 * Older projects add a bare usb_phy_tuning node under the
+		 * phy, holding tuning values rather than a register bank:
+		 *
+		 *	usb_phy_tuning {
+		 *		compatible = "mediatek,phy_tuning";
+		 *		u2_vrt_ref = <4>;
+		 *		...
+		 *	};
+		 *
+		 * It has no reg, so asking for one fails and the whole
+		 * probe used to be abandoned -- which on this device left
+		 * the PHY unregistered, then mtu3 waiting on it, then the
+		 * extcon driver waiting on mtu3, and finally no UDC and no
+		 * adb. The mt6885-specific phy driver this node was written
+		 * for never walked the children, so it was harmless there.
+		 *
+		 * Such a node is not a port. Resolve the address first and
+		 * skip it before anything is created, so a child that is not
+		 * a port leaves no half-built instance behind.
+		 */
+		retval = of_address_to_resource(child_np, 0, &res);
+		if (retval) {
+			dev_info(dev, "skipping %pOF, no address resource\n",
+				 child_np);
+			continue;
+		}
+
 		instance = devm_kzalloc(dev, sizeof(*instance), GFP_KERNEL);
 		if (!instance) {
 			retval = -ENOMEM;
@@ -2416,12 +2444,6 @@ static int mtk_tphy_probe(struct platform_device *pdev)
 			goto put_child;
 		}
 
-		retval = of_address_to_resource(child_np, 0, &res);
-		if (retval) {
-			dev_err(dev, "failed to get address resource(id-%d)\n",
-				port);
-			goto put_child;
-		}
 
 		instance->port_base = devm_ioremap_resource(&phy->dev, &res);
 		if (IS_ERR(instance->port_base)) {
