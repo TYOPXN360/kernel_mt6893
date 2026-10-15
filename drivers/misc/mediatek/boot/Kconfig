@@ -1,0 +1,9 @@
+config MTK_BOOT
+	bool "Enable MTK Boot information Driver"
+	default y
+	help
+	  Boot information driver includes specific information about booting
+	  process, such as boot mode. It provides the boot mode and boot type
+	  to other drivers, and exposes /sys/class/BOOT/BOOT/boot/ so that
+	  userspace -- notably tee-supplicant, which reads boot_type to decide
+	  between the eMMC and UFS RPMB paths -- can read them.
