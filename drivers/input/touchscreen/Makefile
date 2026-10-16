@@ -134,5 +134,18 @@ obj-$(CONFIG_TOUCHSCREEN_FOCALTECH) += focaltech_spi/
 obj-$(CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE) += xiaomi/
 obj-$(CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI) += fts_spi/
 obj-y += double_click.o
+# chopin: Novatek NT36672C SPI touch (compatible "novatek,NVT-ts-spi").
+#
+# Two drivers in this tree claim that compatible string -- NT36672C/ and
+# NVT36672c/ -- and they are not interchangeable. NVT36672c/ is the one
+# that matches this vendor: its firmware names are the ones present in
+# the image (novatek_ts_fw01.bin, novatek_ts_mp01.bin, novatek_ts_fw02.bin,
+# novatek_ts_mp02.bin), where NT36672C/ asks for novatek_ts_fw.bin,
+# novatek_ts_fw_jdi.bin and novatek_ts_fw_tm.bin, none of which exist here.
+# It is a driver from a different project that happens to sit in this tree.
+#
+# mediatek/NT36xxx/ and nt36572_common/ are the I2C half of the pair and
+# bind to "mediatek,cap_touch", not to this panel.
+obj-$(CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI) += NVT36672c/
 TOUCH_LISTS := $(subst ",,$(CONFIG_TOUCHSCREEN_MTK_TOUCH))
 obj-n += $(foreach TOUCH,$(TOUCH_LISTS),$(TOUCH)/)

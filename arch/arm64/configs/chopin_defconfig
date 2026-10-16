@@ -520,6 +520,30 @@ CONFIG_SND_SOC_CS35L41_CHOPIN=y
 # CONFIG_NFSD is not set
 # CONFIG_NFS_FS is not set
 
-# chopin: Novatek NT36672 touch (upstream Kconfig name in 4.19 tree)
+# chopin: Novatek NT36672 touch (spi0, compatible "novatek,NVT-ts-spi").
+#
+# Two things have to line up for the driver to be built at all.
+#
+# 1. CONFIG_TOUCHSCREEN_MTK gates the whole mediatek/ subdirectory in
+#    drivers/input/touchscreen/Makefile. Every vendor panel driver lives
+#    under it, so without this the option below selects nothing.
+#
+# 2. The chip here is on SPI, and the SPI half of the Novatek driver lives
+#    in a separate directory (NT36672C/) that this tree never built. The
+#    four options below cover both halves:
+#
+#      MTK + MTK_NT36xxx  -> mediatek/NT36xxx/     I2C, "mediatek,cap_touch"
+#      NT36xxx            -> nt36572_common/       I2C, "mediatek,cap_touch"
+#      NT36xxx_HOSTDL_SPI -> NT36672C/             SPI, "novatek,NVT-ts-spi"
+#
+#    Only the last one binds to this panel; the I2C ones are left on
+#    because they are what the tree already selected.
+#
+# Without the SPI one, the DT node and the SPI device are both present and
+# correct ("novatek,NVT-ts-spi", spi0.0), but no driver binds, the
+# touchscreen never appears under /sys/class/input, and touch is dead.
+CONFIG_TOUCHSCREEN_MTK=y
 CONFIG_TOUCHSCREEN_MTK_NT36xxx=y
 CONFIG_TOUCHSCREEN_NT36xxx=y
+CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI=y
+CONFIG_TOUCHSCREEN_NVT_DEBUG_FS=y
