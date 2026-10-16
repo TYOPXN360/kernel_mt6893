@@ -43,7 +43,22 @@
 #define NVT_DUMP_PARTITION_PATH		"/data/local/tmp"
 
 static ktime_t start, end;
-const struct firmware *fw_entry = NULL;
+/*
+ * File scope, and only used in this file. The vendor original left this
+ * without static, which collides at link time with the identically named
+ * global in the WLAN driver
+ * (drivers/misc/mediatek/connectivity/wlan/core/gen4m/os/linux/gl_kal.c):
+ *
+ *	ld.lld: error: duplicate symbol: fw_entry
+ *	>>> defined in .../gl_kal.o
+ *	>>> defined in .../nt36xxx_fw_update.o
+ *
+ * 4.14 did not hit this because its WLAN driver calls the variable
+ * wifi_fw_entry; that name was shortened somewhere along the way. Both
+ * were addressed -- the WLAN one renamed back to wifi_fw_entry, and this
+ * one given static, which is what it should have had.
+ */
+static const struct firmware *fw_entry;
 static size_t fw_need_write_size = 0;
 static uint8_t *fwbuf = NULL;
 
