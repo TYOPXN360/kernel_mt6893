@@ -11,6 +11,71 @@
 
 /* Legacy design */
 struct IMGSENSOR_HW_POWER_SEQ sensor_power_sequence[] = {
+/*
+ * chopin's four sensors. Without an entry here the power sequence for that
+ * sensor is missing, imgsensor_hw_power_sequence() bails out with
+ * IMGSENSOR_RETURN_ERROR as soon as it cannot find the name, and the sensor
+ * is left unpowered. It then fails to answer on i2c:
+ *
+ *	I2C read failed (-121)!              (-EREMOTEIO, no ACK)
+ *	Read sensor id fail, i2c write id: 0x20, id: 0x0
+ *
+ * which is why the HAL enumerated zero cameras.
+ */
+#if defined(OV64B40SUNNY_MIPI_RAW)
+	{
+		SENSOR_DRVNAME_OV64B40SUNNY_MIPI_RAW,
+		{
+			{RST, Vol_Low, 2},
+			{DOVDD, Vol_1800, 0},
+			{AVDD, Vol_2800, 0},
+			{DVDD, Vol_1100, 2},
+			{SensorMCLK, Vol_High, 2},
+			{RST, Vol_High, 5}
+		},
+	},
+#endif
+#if defined(OV16A1QOFILM_MIPI_RAW)
+	{
+		SENSOR_DRVNAME_OV16A1QOFILM_MIPI_RAW,
+		{
+			{RST, Vol_Low, 2},
+			{DOVDD, Vol_1800, 0},
+			{DVDD, Vol_1200, 0},
+			{AVDD, Vol_2800, 2},
+			{SensorMCLK, Vol_High, 2},
+			{RST, Vol_High, 5},
+		},
+	},
+#endif
+#if defined(GC02M1SUNNY_MIPI_RAW)
+	{
+		SENSOR_DRVNAME_GC02M1SUNNY_MIPI_RAW,
+		{
+			{RST, Vol_Low, 2},
+			{DOVDD, Vol_1800, 1},
+#if defined(_XIAOMI_CHOPIN_)
+			{PDN, Vol_High, 1},
+#endif
+			{AVDD, Vol_2800, 2},
+			{SensorMCLK, Vol_High, 1},
+			{RST, Vol_High, 5},
+		},
+	},
+#endif
+#if defined(IMX355SUNNY_MIPI_RAW)
+	{
+		SENSOR_DRVNAME_IMX355SUNNY_MIPI_RAW,
+		{
+			{RST, Vol_Low, 2},
+			{AVDD, Vol_2800, 0},
+			{DVDD, Vol_1200, 0},
+			{DOVDD, Vol_1800, 2},
+			{SensorMCLK, Vol_High, 3},
+			{RST, Vol_High, 5}
+		},
+	},
+#endif
 #if defined(AGATES5KHM2_MIPI_RAW)
 	{
 		SENSOR_DRVNAME_AGATES5KHM2_MIPI_RAW,
