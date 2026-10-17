@@ -26,8 +26,26 @@
 #define EXT_SPK_AMP_W_NAME "Ext_Speaker_Amp"
 
 #ifdef CONFIG_SND_SOC_CS35L41
+/*
+ * Which i2c bus the two CS35L41 amps end up on differs per board, and the
+ * ASoC component name is derived from it ("speaker_amp.<bus>-<addr>"). The
+ * machine driver has to look them up by exactly that name, so the bus
+ * number has to agree with where the device actually is.
+ *
+ * On chopin the amps are on i2c6 (11f01000.i2c6): the dtbo fragment that
+ * describes them targets i2c6, overriding the &i2c7 the main dtsi uses.
+ * Other platforms keep them on i2c7. 4.14 had this split and it went
+ * missing in the 4.19 tree, leaving bus 7 unconditionally -- which made
+ * snd_soc_find_dai() fail with "CODEC DAI cs35l41-pcm not registered" and
+ * the card never register, so no sound card appeared at all.
+ */
+#ifdef CONFIG_SND_SOC_CS35L41_CHOPIN
+#define CS35L41_SPEAKER_NAME "speaker_amp.6-0040"
+#define CS35L41_RECEIVER_NAME "speaker_amp.6-0042"
+#else
 #define CS35L41_SPEAKER_NAME "speaker_amp.7-0040"
 #define CS35L41_RECEIVER_NAME "speaker_amp.7-0042"
+#endif
 static struct snd_soc_codec_conf cs35l41_codec_conf[] = {
 	{
 		.dev_name	= CS35L41_RECEIVER_NAME,
