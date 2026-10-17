@@ -196,4 +196,29 @@ obj-$(CONFIG_ARCH_MEDIATEK) += mboot_params/
 obj-$(CONFIG_MTK_BOOT) += boot/
 
 subdir-ccflags-y += -D_XIAOMI_
+
+# Which board these drivers are being built for. Several files branch on
+# these macros to pick per-board pin and regulator wiring -- notably
+# imgsensor's camera_hw/imgsensor_cfg_table.c, which under _XIAOMI_AGATE_
+# references IMGSENSOR_HW_PIN_AFVDD, an enum only declared when _XIAOMI_
+# is set in imgsensor_cfg_table.h.
+#
+# This used to be a single unconditional -D_XIAOMI_AGATE_, which described
+# chopin incorrectly (CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES is
+# "mediatek/chopin" here) and broke the imgsensor build. Restored the
+# conditional form so each board gets its own macro.
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"mediatek/ares")
+subdir-ccflags-y += -D_XIAOMI_ARES_
+endif
+
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"mediatek/chopin")
+subdir-ccflags-y += -D_XIAOMI_CHOPIN_
+endif
+
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"mediatek/agate")
 subdir-ccflags-y += -D_XIAOMI_AGATE_
+endif
+
+ifeq ($(CONFIG_BUILD_XIAOMI_CAMERA_IMAGE_NAMES),"mediatek/pissarro")
+subdir-ccflags-y += -D_XIAOMI_PISSARRO_
+endif
