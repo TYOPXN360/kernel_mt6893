@@ -5006,16 +5006,37 @@ void mtk_crtc_load_round_corner_pattern(struct drm_crtc *crtc,
 	struct mtk_panel_params *panel_ext = mtk_drm_get_lcm_ext_params(crtc);
 
 	if (panel_ext && panel_ext->round_corner_en) {
-		mtk_crtc->round_corner_gem =
-			__load_rc_pattern(crtc, panel_ext->corner_pattern_tp_size,
-						panel_ext->corner_pattern_lt_addr);
+		/*
+		 * Only allocate once. This runs from mtk_crtc_first_cfg() on
+		 * every display bring-up, and the gem handles are stored
+		 * straight into the crtc without the old ones ever being
+		 * freed. Re-allocating therefore both leaks the previous
+		 * patterns and, once their mappings are recycled, leaves the
+		 * hardware pointing at stale dma addresses:
+		 *
+		 *   iommu fault iova=0x4833d000 pa=0x0
+		 *   TRANSLATION FAULT port=L0_DISP_POSTMASK0
+		 *
+		 * POSTMASK then reads unmapped memory, gets zeros back, and
+		 * the composed output is black.
+		 */
+		if (!mtk_crtc->round_corner_gem)
+			mtk_crtc->round_corner_gem =
+				__load_rc_pattern(crtc,
+					panel_ext->corner_pattern_tp_size,
+					panel_ext->corner_pattern_lt_addr);
 
-		mtk_crtc->round_corner_gem_l =
-			__load_rc_pattern(crtc, panel_ext->corner_pattern_tp_size_l,
-						panel_ext->corner_pattern_lt_addr_l);
-		mtk_crtc->round_corner_gem_r =
-			__load_rc_pattern(crtc, panel_ext->corner_pattern_tp_size_r,
-						panel_ext->corner_pattern_lt_addr_r);
+		if (!mtk_crtc->round_corner_gem_l)
+			mtk_crtc->round_corner_gem_l =
+				__load_rc_pattern(crtc,
+					panel_ext->corner_pattern_tp_size_l,
+					panel_ext->corner_pattern_lt_addr_l);
+
+		if (!mtk_crtc->round_corner_gem_r)
+			mtk_crtc->round_corner_gem_r =
+				__load_rc_pattern(crtc,
+					panel_ext->corner_pattern_tp_size_r,
+					panel_ext->corner_pattern_lt_addr_r);
 
 		mtk_crtc_config_round_corner(crtc, handle);
 	}
