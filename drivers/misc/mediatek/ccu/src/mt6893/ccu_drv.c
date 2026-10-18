@@ -116,7 +116,12 @@ static irqreturn_t ccu_isr_callback_xxx(int irq, void *device_id)
 	return IRQ_HANDLED;
 }
 
-static uint32_t get_checksum(uint8_t *data, uint32_t size)
+/*
+ * Kept for a future HAL that actually fills chksum in struct CcuMemInfo.
+ * Nothing calls it today: the vendor CCU library on this device predates the
+ * integrity word, so ALLOC_MEM and DEALLOC_MEM no longer verify it.
+ */
+static __maybe_unused uint32_t get_checksum(uint8_t *data, uint32_t size)
 {
 	uint32_t i, val, tv, sz, *ptr;
 
@@ -990,7 +995,6 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 	case CCU_IOCTL_ALLOC_MEM:
 	{
 		struct CcuMemHandle handle;
-		uint32_t cs;
 
 		handle.ionHandleKd = 0;
 		ret = copy_from_user(&(handle.meminfo),
@@ -1002,12 +1006,23 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 			break;
 		}
 
-		cs = get_checksum((uint8_t *)&(handle.meminfo.shareFd),
-			sizeof(struct CcuMemInfo) - sizeof(unsigned int));
-		if (cs != handle.meminfo.chksum) {
-			ret = -EINVAL;
-			break;
-		}
+		/*
+		 * No checksum on this path.
+		 *
+		 * The mt6893 driver added one, but the vendor CCU library on
+		 * this device never computes it: _ccuAllocMemKd() writes
+		 * shareFd, va, size and cached into struct CcuMemInfo and
+		 * leaves the chksum word untouched, so it arrives as stack
+		 * garbage. Rejecting that made every CCU_IOCTL_ALLOC_MEM fail
+		 * with a silent -EINVAL, CcuMemMgr reported totalSize 0,
+		 * CcuBuffer stayed unpopulated, logBufMva[0] came back as 0,
+		 * and CcuDrvImp::boot() ended up memset()ing a NULL pointer.
+		 *
+		 * ccu_mva.h is shared, so the structure layout still has to
+		 * match; only the integrity word is dropped, which is exactly
+		 * how ccu/src/2.0 and 2.1 behave -- and those are the contract
+		 * this HAL was built against.
+		 */
 
 		ret = ccu_allocate_mem(&handle, handle.meminfo.size,
 			handle.meminfo.cached);
@@ -1023,7 +1038,6 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 	case CCU_IOCTL_DEALLOC_MEM:
 	{
 		struct CcuMemHandle handle;
-		uint32_t cs;
 
 		ret = copy_from_user(&(handle.meminfo),
 			(void *)arg, sizeof(struct CcuMemInfo));
@@ -1034,12 +1048,7 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 			break;
 		}
 
-		cs = get_checksum((uint8_t *)&(handle.meminfo.shareFd),
-				sizeof(struct CcuMemInfo) - sizeof(unsigned int));
-		if (cs != handle.meminfo.chksum) {
-			ret = -EINVAL;
-			break;
-		}
+		/* No checksum on this path either; see ALLOC_MEM above. */
 
 		ret = ccu_deallocate_mem(&handle);
 		if (ret != 0) {
