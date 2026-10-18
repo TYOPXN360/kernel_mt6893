@@ -188,6 +188,23 @@ enum gce_event_id {
 #define VCU_GET_LOG_OBJECT	_IOW('v', 11, struct log_test_nofuse)
 #define VCU_SET_LOG_OBJECT	_IOW('v', 12, struct log_test_nofuse)
 #define VCU_SET_MMAP_TYPE	_IOW('v', 13, struct map_obj)
+#define VCU_SET_MMAP_TYPE	_IOW('v', 13, struct map_obj)
+
+/*
+ * The vpud shipped in this vendor is 32-bit and was built with
+ * CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY, so its struct log_test_nofuse has no
+ * "type" field and is 1024 bytes rather than 1028. That changes the size
+ * encoded into the ioctl number, so its VCU_GET_LOG_OBJECT does not match
+ * ours and every call lands in the compat ioctl default branch, printing
+ * "[VCU] Invalid cmd_number" about 16 times a second and burying the
+ * kernel log.
+ *
+ * Accept both spellings; the payload layout is compatible either way
+ * because the legacy one is just the log_info array without the leading
+ * type word.
+ */
+#define VCU_GET_LOG_OBJECT_LEGACY	_IOW('v', 11, struct log_test_nofuse_legacy)
+#define VCU_SET_LOG_OBJECT_LEGACY	_IOW('v', 12, struct log_test_nofuse_legacy)
 
 #define COMPAT_VCU_SET_OBJECT		_IOW('v', 0, struct share_obj)
 #define COMPAT_VCU_MVA_ALLOCATION	_IOWR('v', 1, struct compat_mem_obj)
@@ -226,6 +243,11 @@ struct log_test_nofuse {
 #if !IS_ENABLED(CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY)
 	int type; // 0: set log from ks to us; 1: get log from us to ks;
 #endif
+	char log_info[LOG_INFO_SIZE];
+};
+
+/* Layout used by the 32-bit vpud in this vendor; no leading type word. */
+struct log_test_nofuse_legacy {
 	char log_info[LOG_INFO_SIZE];
 };
 

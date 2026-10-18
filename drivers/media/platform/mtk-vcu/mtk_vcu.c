@@ -526,7 +526,16 @@ static int vcu_ipi_get(struct mtk_vcu *vcu, unsigned long arg)
 	return ret;
 }
 
+static int vcu_log_get_sized(struct mtk_vcu *vcu, unsigned long arg, size_t len);
 static int vcu_log_get(struct mtk_vcu *vcu, unsigned long arg)
+{
+	return vcu_log_get_sized(vcu, arg, sizeof(struct log_test_nofuse));
+}
+
+/* @len is the user's struct size: 1028 for our layout, 1024 for the
+ * legacy one the 32-bit vpud uses. copy_to_user must not write past the
+ * caller's buffer. */
+static int vcu_log_get_sized(struct mtk_vcu *vcu, unsigned long arg, size_t len)
 {
 	int ret;
 	unsigned char *user_data_addr = NULL;
@@ -542,7 +551,7 @@ static int vcu_log_get(struct mtk_vcu *vcu, unsigned long arg)
 	}
 
 	ret = copy_to_user(user_data_addr, vcu->vdec_log_info,
-			   (unsigned long)sizeof(struct log_test_nofuse));
+			   (unsigned long)len);
 	if (ret != 0) {
 		pr_info("[VCU] %s(%d) Copy data to user failed!\n",
 			__func__, __LINE__);
@@ -1906,6 +1915,13 @@ static long mtk_vcu_unlocked_ioctl(struct file *file, unsigned int cmd,
 	case VCU_GET_LOG_OBJECT:
 		ret = vcu_log_get(vcu_dev, arg);
 		break;
+	case VCU_GET_LOG_OBJECT_LEGACY:
+		/* 32-bit vpud: 1024-byte payload, no leading "type" word.
+		 * Copying sizeof(struct log_test_nofuse) would run 4 bytes
+		 * past the caller's buffer. */
+		ret = vcu_log_get_sized(vcu_dev, arg,
+			sizeof(struct log_test_nofuse_legacy));
+		break;
 #if !IS_ENABLED(CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY)
 	case VCU_SET_LOG_OBJECT:
 		ret = vcu_log_set(vcu_dev, arg);
@@ -2186,6 +2202,21 @@ static long mtk_vcu_unlocked_compat_ioctl(struct file *file, unsigned int cmd,
 		err = compat_put_vpud_allocation_data(data32, data);
 		if (err != 0)
 			return err;
+		break;
+	case VCU_GET_LOG_OBJECT_LEGACY:
+	case VCU_SET_LOG_OBJECT_LEGACY:
+		/* The 32-bit vpud in this vendor was built with
+		 * CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY, so its struct
+		 * log_test_nofuse lacks the leading "type" word and is 1024
+		 * bytes instead of 1028. That size is encoded in the ioctl
+		 * number, so without this its calls fall to default and it
+		 * prints "[VCU] Invalid cmd_number" ~16x/second forever,
+		 * drowning the kernel log. Payload is just the log_info
+		 * array, which is the tail of our struct, so the user
+		 * pointer can be passed straight through. */
+		share_data32 = compat_ptr((uint32_t)arg);
+		ret = file->f_op->unlocked_ioctl(file, cmd,
+			(unsigned long)share_data32);
 		break;
 	default:
 		pr_err("[VCU] Invalid cmd_number 0x%x.\n", cmd);
