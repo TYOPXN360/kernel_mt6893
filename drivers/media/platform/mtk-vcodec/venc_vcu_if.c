@@ -617,6 +617,18 @@ int vcu_enc_encode(struct venc_vcu_inst *vcu, unsigned int bs_mode,
 			out.bs_fd);
 	}
 
+	/*
+	 * Dump what vpud is actually handed. It answers ENCODE with status=1
+	 * and never says why, so the only way to tell a bad descriptor from a
+	 * bad address is to record both sides of the transfer.
+	 */
+	pr_info("[VCU-ENC] encode: planes=%d bs_mode=%d inst=%#x in_fd=%d,%d,%d bs_fd=%d in_sz=%u,%u,%u in_addr=%#x,%#x,%#x bs_addr=%#x bs_sz=%u meta_fd=%d\n",
+		out.fb_num_planes, out.bs_mode, out.vcu_inst_addr,
+		out.input_fd[0], out.input_fd[1], out.input_fd[2], out.bs_fd,
+		out.input_size[0], out.input_size[1], out.input_size[2],
+		out.input_addr[0], out.input_addr[1], out.input_addr[2],
+		out.bs_addr, out.bs_size, vsi->meta_fd);
+
 	mutex_lock(vcu->ctx_ipi_binding);
 	vcu_enc_set_ctx(vcu, frm_buf, bs_buf);
 	ret = vcu_enc_send_msg(vcu, &out, sizeof(out));
