@@ -137,11 +137,21 @@ int vcu_enc_ipi_handler(void *data, unsigned int len, void *priv)
 		return 1;
 	}
 
-	mtk_vcodec_debug(vcu, "msg_id %x inst %p status %d",
-					 msg->msg_id, vcu, msg->status);
+	/*
+	 * Unconditional trace. vpud refuses the encode with a status word that
+	 * nothing in the driver ever prints, so a failure here is invisible:
+	 * vcu_enc_send_msg() later returns -EINVAL without a message and the
+	 * only symptom upstream is "AP_IPIMSG_ENC_ENCODE 2 fail -22".
+	 */
+	pr_info("[VCU-ENC] msg_id=%#x venc_inst=%d status=%d abort=%d daemon_pid=%d curr=%d\n",
+		msg->msg_id, msg_ctx_id, msg->status, vcu->abort,
+		vcu->daemon_pid, current->tgid);
 
-	if (vcu->abort)
+	if (vcu->abort) {
+		pr_info("[VCU-ENC] rejected: abort set, msg_id=%#x\n",
+			msg->msg_id);
 		return -EINVAL;
+	}
 
 	ctx = vcu->ctx;
 	switch (msg->msg_id) {
@@ -252,8 +262,14 @@ static int vcu_enc_send_msg(struct venc_vcu_inst *vcu, void *msg,
 			vcu->abort = 1;
 		return status;
 	}
-	if (vcu->failure)
+	if (vcu->failure) {
+		/* Sticky: only vcu_enc_init() clears it, so one refusal makes
+		 * every later encode fail until the codec is reopened.
+		 */
+		pr_info("[VCU-ENC] send_msg: failure flag set, returning EINVAL (msg_id=%#x)\n",
+			((struct venc_vcu_ipi_msg_common *)msg)->msg_id);
 		return -EINVAL;
+	}
 
 	mtk_vcodec_debug_leave(vcu);
 
