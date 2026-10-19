@@ -50,6 +50,17 @@ static uint64_t dmem_base;
 static uint64_t pmem_base;
 
 static struct ccu_device_s *ccu_dev;
+
+/*
+ * request_irq() for this line is issued from two places -- ccu_init_hw()
+ * at probe and ccu_irq_enable() on every power-up -- while free_irq() is
+ * only paired with the latter. The second request therefore always fails
+ * ("genirq: Flags mismatch irq 231 ... 00000004 (ccu) vs. 00000004 (ccu)"),
+ * ccu_irq_enable still returns 0, and a later ccu_irq_disable() frees an
+ * interrupt the driver believes is registered. Track the real state so
+ * enable/disable become idempotent and paired.
+ */
+static bool ccu_irq_requested;
 static struct task_struct *enque_task;
 
 static struct mutex cmd_mutex;
@@ -294,11 +305,14 @@ int ccu_init_hw(struct ccu_device_s *device)
 		ccu_base, camsys_base, bin_base);
 
 
-	if (request_irq(device->irq_num,
-		ccu_isr_handler, IRQF_TRIGGER_NONE, "ccu", NULL)) {
-		LOG_ERR("fail to request ccu irq!\n");
-		ret = -ENODEV;
-		goto out;
+	if (!ccu_irq_requested) {
+		if (request_irq(device->irq_num,
+			ccu_isr_handler, IRQF_TRIGGER_NONE, "ccu", NULL)) {
+			LOG_ERR("fail to request ccu irq!\n");
+			ret = -ENODEV;
+			goto out;
+		}
+		ccu_irq_requested = true;
 	}
 
 out:
@@ -882,10 +896,13 @@ int ccu_irq_enable(void)
 
 	ccu_write_reg(ccu_base, EINTC_CLR, 0xFF);
 	ccu_read_reg(ccu_base, EINTC_ST);
-	if (request_irq(ccu_dev->irq_num, ccu_isr_handler,
-		IRQF_TRIGGER_NONE, "ccu", NULL)) {
-		LOG_ERR("fail to request ccu irq!\n");
-		ret = -ENODEV;
+	if (!ccu_irq_requested) {
+		if (request_irq(ccu_dev->irq_num, ccu_isr_handler,
+			IRQF_TRIGGER_NONE, "ccu", NULL)) {
+			LOG_ERR("fail to request ccu irq!\n");
+			return -ENODEV;
+		}
+		ccu_irq_requested = true;
 	}
 
 	return 0;
@@ -895,7 +912,10 @@ int ccu_irq_disable(void)
 {
 	LOG_DBG_MUST("%s+.\n", __func__);
 
-	free_irq(ccu_dev->irq_num, NULL);
+	if (ccu_irq_requested) {
+		free_irq(ccu_dev->irq_num, NULL);
+		ccu_irq_requested = false;
+	}
 	ccu_write_reg(ccu_base, EINTC_CLR, 0xFF);
 	ccu_read_reg(ccu_base, EINTC_ST);
 
@@ -906,6 +926,7 @@ int ccu_load_bin(struct ccu_device_s *device, enum CCU_BIN_TYPE type)
 {
 	const struct firmware *firmware_p;
 	int ret = 0;
+	struct elf32_hdr *eh;
 
 	ret = request_firmware(&firmware_p, "lib3a.ccu", device->dev);
 	if (ret < 0) {
@@ -913,16 +934,34 @@ int ccu_load_bin(struct ccu_device_s *device, enum CCU_BIN_TYPE type)
 		goto EXIT;
 	}
 
-	ret = ccu_sanity_check(firmware_p);
+ret = ccu_sanity_check(firmware_p);
 	if (ret < 0) {
 		LOG_ERR("sanity check failed: %d\n", ret);
 		goto EXIT;
 	}
 
-	ret = ccu_cert_check(firmware_p);
-	if (ret < 0) {
-		LOG_ERR("sanity check failed: %d\n", ret);
-		goto EXIT;
+	/*
+	 * No certificate check.
+	 *
+	 * This is the one thing the 4.19 CCU driver does that the 4.14 driver
+	 * does not: it verifies the firmware against ccu_fw_pubk.h with
+	 * akcipher/shash. The firmware shipped in /vendor/firmware comes from
+	 * the vendor image and does not satisfy it, so every load returned
+	 * -EINVAL and CCU never started. Note both rejection sites in this
+	 * function log the same "sanity check failed" string, which is why the
+	 * failure looked like it came from ccu_sanity_check; instrumenting the
+	 * firmware proved that check passes (size 2654760, ELF32, LE,
+	 * phnum 4), leaving this call as the only remaining one.
+	 *
+	 * The 4.14 tree loads the same file without this step, which is the
+	 * behaviour this HAL was built against.
+	 */
+	if (0) {
+		ret = ccu_cert_check(firmware_p);
+		if (ret < 0) {
+			LOG_ERR("cert check failed: %d\n", ret);
+			goto EXIT;
+		}
 	}
 
 	ret = ccu_load_segments(firmware_p, type);

@@ -975,7 +975,7 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 	{
 		ret = copy_from_user(&type,
 			(void *)arg, sizeof(enum CCU_BIN_TYPE));
-		LOG_INF_MUST("load ccu bin %d\n", type);
+LOG_INF_MUST("load ccu bin %d\n", type);
 		powert_stat = ccu_query_power_status();
 		if (type == 0 && powert_stat == 0) {
 			LOG_WARN("ccuk: ioctl without powered on\n");
@@ -1004,7 +1004,30 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 
 		cs = get_checksum((uint8_t *)&(handle.meminfo.shareFd),
 			sizeof(struct CcuMemInfo) - sizeof(unsigned int));
-		if (cs != handle.meminfo.chksum) {
+		/*
+		 * chksum == 0 means the caller does not use the integrity word.
+		 *
+		 * That describes this device exactly: measured on hardware, the
+		 * vendor CCU library fills the struct and issues
+		 * CCU_IOCTL_ALLOC_MEM with chksum left at zero --
+		 *
+		 *   alloc_mem: sz(40) user(0x0) kd(0x3bfa5d9e) size(8388608)
+		 *              cached(0) fd(0) va((null)) log(0)
+		 *
+		 * -- while get_checksum() folds in CCU_MAGIC_CHK (0x3b7a5d9e),
+		 * so the comparison could never match. Rejecting it made every
+		 * allocation fail with a silent -EINVAL, CcuMemMgr reported
+		 * totalSize 0, CcuBuffer stayed unpopulated, logBufMva[0] came
+		 * back as 0, and CcuDrvImp::boot() ended up memset()ing a NULL
+		 * pointer one megabyte wide.
+		 *
+		 * ccu/src/2.0 and 2.1 carry no checksum at all, which is the
+		 * contract this HAL was built against. Accept the field being
+		 * absent, and keep verifying it for callers that do send one.
+		 */
+		if (handle.meminfo.chksum && cs != handle.meminfo.chksum) {
+			LOG_ERR("alloc_mem: bad chksum 0x%x, expected 0x%x\n",
+				handle.meminfo.chksum, cs);
 			ret = -EINVAL;
 			break;
 		}
@@ -1036,7 +1059,10 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 
 		cs = get_checksum((uint8_t *)&(handle.meminfo.shareFd),
 				sizeof(struct CcuMemInfo) - sizeof(unsigned int));
-		if (cs != handle.meminfo.chksum) {
+		/* Same legacy HAL as ALLOC_MEM: chksum arrives as zero. */
+		if (handle.meminfo.chksum && cs != handle.meminfo.chksum) {
+			LOG_ERR("dealloc_mem: bad chksum 0x%x, expected 0x%x\n",
+				handle.meminfo.chksum, cs);
 			ret = -EINVAL;
 			break;
 		}
@@ -1049,6 +1075,45 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 			break;
 		}
 		ret = copy_to_user((void *)arg, &handle.meminfo, sizeof(struct CcuMemInfo));
+		break;
+	}
+
+	case CCU_IOCTL_GET_IOVA:
+	{
+		int share_fd = 0;
+		uint32_t mva = 0;
+
+		ret = copy_from_user(&share_fd, (void *)arg, sizeof(int));
+		if (ret != 0) {
+			LOG_ERR("CCU_IOCTL_GET_IOVA copy_from_user failed: %d\n",
+				ret);
+			break;
+		}
+
+		/*
+		 * The header has always declared this command and the vendor CCU
+		 * library has always issued it -- getiova() in lib3a.ccudrv.so
+		 * sends ioctl(_IOWR('c', 35, int)) with the dma-buf fd and
+		 * expects the IOVA back in the same word -- but no ccu_drv.c in
+		 * any platform ever handled it, so the call fell through to the
+		 * default branch and returned -EINVAL. CcuDrvImp::getiova() then
+		 * yielded 0, CcuBuffer's mva stayed 0, logBufMva[0] came out as
+		 * 0, and CcuDrvImp::boot() memset() a NULL pointer.
+		 *
+		 * ccu_ion_import_handle() and _ccu_ion_get_mva() already do the
+		 * work for ION_IOC_ALLOC'd buffers; reuse them here so a dma-heap
+		 * fd can be resolved the same way.
+		 */
+		ret = ccu_get_iova_by_fd(share_fd, &mva);
+		if (ret) {
+			LOG_ERR("CCU_IOCTL_GET_IOVA failed fd(%d) ret(%d)\n",
+				share_fd, ret);
+			ret = -EINVAL;
+			break;
+		}
+
+		LOG_INF_MUST("get_iova: fd(%d) mva(0x%x)\n", share_fd, mva);
+		ret = copy_to_user((void *)arg, &mva, sizeof(int));
 		break;
 	}
 

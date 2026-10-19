@@ -177,6 +177,14 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		handle = ion_import_dma_buf_fd(client, data.fd.fd);
 		if (IS_ERR(handle)) {
 			ret = PTR_ERR(handle);
+			/*
+			 * IONMSG is pr_debug in this tree, so this rejection
+			 * never reaches dmesg at the default log level and the
+			 * camera HAL's "ion_import fail" looked like it was
+			 * happening somewhere the kernel never saw.
+			 */
+			pr_info("[ION] import FAIL fd=%d ret=%d\n",
+				data.fd.fd, ret);
 			IONMSG("ion_import fail: fd=%d, ret=%d\n",
 			       data.fd.fd, ret);
 			return ret;

@@ -48,5 +48,6 @@ int ccu_allocate_mem(struct CcuMemHandle *memHandle, int size, bool cached);
 int ccu_deallocate_mem(struct CcuMemHandle *memHandle);
 
 struct CcuMemInfo *ccu_get_binary_memory(void);
+int ccu_get_iova_by_fd(int fd, uint32_t *mva);
 
 #endif

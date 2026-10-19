@@ -388,3 +388,32 @@ struct CcuMemInfo *ccu_get_binary_memory(void)
 	LOG_ERR("ccu ddr va not found!\n");
 	return NULL;
 }
+
+/*
+ * Resolve a dma-buf fd to the IOVA the CCU sees.
+ *
+ * Needed because CCU_IOCTL_GET_IOVA is declared in ccu_drv.h and issued by
+ * the vendor library's CcuDrvImp::getiova(), but was never implemented in
+ * any ccu_drv.c. CcuDrvImp::getiova() therefore returned 0, CcuBuffer's mva
+ * stayed 0, logBufMva[0] came out as 0, and CcuDrvImp::boot() memset() a
+ * NULL pointer one megabyte wide.
+ *
+ * ccu_ion_import_handle() and _ccu_ion_get_mva() are static here, so keep
+ * the fd-to-mva translation next to them.
+ */
+int ccu_get_iova_by_fd(int fd, uint32_t *mva)
+{
+	struct ion_handle *handle;
+	int ret;
+
+	if (!mva)
+		return -EINVAL;
+
+	handle = ccu_ion_import_handle(fd);
+	if (!handle)
+		return -EINVAL;
+
+	ret = _ccu_ion_get_mva(_ccu_ion_client, handle, mva, false);
+	ccu_ion_free_import_handle(handle);
+	return ret;
+}

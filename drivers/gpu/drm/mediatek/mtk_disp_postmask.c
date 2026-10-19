@@ -187,7 +187,7 @@ static void mtk_postmask_config(struct mtk_ddp_comp *comp,
 	unsigned int i = 0;
 	unsigned int num = 0;
 #else
-	struct mtk_drm_gem_obj *gem;
+	struct mtk_drm_gem_obj *gem = NULL;
 	unsigned int size = 0;
 	unsigned int addr = 0;
 	unsigned int force_relay = 0;
