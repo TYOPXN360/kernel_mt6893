@@ -321,6 +321,11 @@ CONFIG_V4L_MEM2MEM_DRIVERS=y
 CONFIG_VIDEO_MEDIATEK_JPEG=y
 CONFIG_VIDEO_MEDIATEK_VCU_WO_FUSE=y
 CONFIG_VIDEO_MEDIATEK_VCODEC=y
+# The vendor vpud (32-bit, built against the 4.14 headers) uses the
+# legacy shared structs: its venc_vcu_config has no
+# svp_is_hal_secure_handle field and its log_test_nofuse has no
+# leading type word. Keep our layouts matching it.
+CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY=y
 CONFIG_DRM=y
 CONFIG_DRM_MEDIATEK=y
 CONFIG_DRM_MEDIATEK_LEGACY=y
