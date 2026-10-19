@@ -1915,6 +1915,7 @@ static long mtk_vcu_unlocked_ioctl(struct file *file, unsigned int cmd,
 	case VCU_GET_LOG_OBJECT:
 		ret = vcu_log_get(vcu_dev, arg);
 		break;
+#if !IS_ENABLED(CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY)
 	case VCU_GET_LOG_OBJECT_LEGACY:
 		/* 32-bit vpud: 1024-byte payload, no leading "type" word.
 		 * Copying sizeof(struct log_test_nofuse) would run 4 bytes
@@ -1922,6 +1923,7 @@ static long mtk_vcu_unlocked_ioctl(struct file *file, unsigned int cmd,
 		ret = vcu_log_get_sized(vcu_dev, arg,
 			sizeof(struct log_test_nofuse_legacy));
 		break;
+#endif
 #if !IS_ENABLED(CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY)
 	case VCU_SET_LOG_OBJECT:
 		ret = vcu_log_set(vcu_dev, arg);
@@ -2203,6 +2205,10 @@ static long mtk_vcu_unlocked_compat_ioctl(struct file *file, unsigned int cmd,
 		if (err != 0)
 			return err;
 		break;
+#if !IS_ENABLED(CONFIG_VIDEO_MEDIATEK_VCODEC_LEGACY)
+	/* With the legacy structs enabled these two ioctl numbers are
+	 * identical to VCU_GET/SET_LOG_OBJECT, which the non-legacy cases
+	 * above already handle. */
 	case VCU_GET_LOG_OBJECT_LEGACY:
 	case VCU_SET_LOG_OBJECT_LEGACY:
 		/* The 32-bit vpud in this vendor was built with
@@ -2218,6 +2224,7 @@ static long mtk_vcu_unlocked_compat_ioctl(struct file *file, unsigned int cmd,
 		ret = file->f_op->unlocked_ioctl(file, cmd,
 			(unsigned long)share_data32);
 		break;
+#endif
 	default:
 		pr_err("[VCU] Invalid cmd_number 0x%x.\n", cmd);
 		break;
