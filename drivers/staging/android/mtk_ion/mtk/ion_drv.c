@@ -263,10 +263,29 @@ static int __cache_sync_by_range(struct ion_client *client,
 
 	/* userspace va check */
 	ret  = __ion_is_user_va(start, size);
+
+	/*
+	 * Touch the pages before taking mmap_read_lock, never under it.
+	 *
+	 * ion_check_user_va() faults pages in with get_user(), and a faulted
+	 * page needs the mmap lock itself. Doing that while this thread already
+	 * holds the lock read-side deadlocks as soon as a writer queues, which
+	 * is exactly what the blocked-camera stacks showed:
+	 *
+	 *   __switch_to
+	 *   _ion_ioctl+0x5dc/0x77c
+	 *   ion_custom_ioctl
+	 *   3ATHREAD / IspEnqThd_TG1   (both state D)
+	 *
+	 * That deadlock froze P1 after the first few frames, since the very
+	 * next cache sync on a not-yet-faulted page never returned.
+	 */
+	if (ret)
+		ret = ion_check_user_va(start, size);
+
 	if (ret) {
 		lock_vma = true;
 		mmap_read_lock(current->mm);
-		ret = ion_check_user_va(start, size);
 	}
 
 	if (!ret) {
