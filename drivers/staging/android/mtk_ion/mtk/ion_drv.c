@@ -181,51 +181,64 @@ static int vma_is_ion_node(struct vm_area_struct *vma)
  * @return 0: check fail
  * @return 1: check pass
  */
-static int ion_check_user_va(unsigned long va, size_t size)
+static int ion_check_user_va(unsigned long va, size_t *size)
 {
 	struct vm_area_struct *vma;
 	unsigned long start = va;
-	unsigned long end;
-	int ret = 0;
-
-	end = start + size;
+	unsigned long end = va + *size;
+	unsigned long mapped_end = va;
 
 	/* overflow check */
-	if (unlikely(end < start))
+	if (unlikely(end < va))
 		return 0;
 
 	/*
-	 * Require the whole range to be backed by mapped VMAs.
+	 * Clamp the range to the part that is actually mapped.
 	 *
-	 * __ion_is_user_va() only touches the first and last byte, so a range
-	 * whose ends are mapped and whose middle is not passes it, and the cache
-	 * maintenance that follows walks into the hole:
+	 * The callers pass a range that runs off the end of a buffer: the CCU
+	 * asks to invalidate 0x3a020 bytes at 0x7c44677000 while the mapping
+	 * stops at 0x7c44692000, and the dcache instruction then walks into a
+	 * page whose PTE is empty:
 	 *
-	 *   Unable to handle kernel paging request at virtual address 0000007b06ee7000
-	 *   [0000007b06ee7000] pgd=..., pud=..., pmd=..., pte=0000000000000000
-	 *   pc : __flush_dcache_user_area
+	 *   Unable to handle kernel paging request at virtual address 0000007c44692000
+	 *   [0000007c44692000] pgd=..., pud=..., pmd=..., pte=0000000000000000
+	 *   pc : __inval_dcache_user_area+0x74/0xbc
 	 *    _ion_ioctl
 	 *
-	 * Probing every page with get_user() would also find the hole, but it
-	 * costs one fixup-capable access per page -- 1024 of them for a 4MB
-	 * buffer, on every cache sync, every frame. That was enough to push the
-	 * ISP past its frame deadline (int_us 60ms against a 33ms budget) and
-	 * make it drop every frame, so keep this O(number of VMAs).
+	 * A VMA walk alone does not catch this: the address can sit inside a
+	 * VMA whose page has simply not been faulted in yet, and a cache
+	 * maintenance instruction does not fault pages in. Probing every page
+	 * with get_user() does catch it, but costs an uaccess entry per page
+	 * (1024 of them for a 4MB buffer, every frame) and pushes the ISP past
+	 * its frame deadline.
 	 *
-	 * Do not require vma_is_ion_node(): these buffers come from dma-heap, so
-	 * that test rejects every legitimate caller.
+	 * Clamping instead is both cheap and correct: bytes past the mapping
+	 * hold no data, so there is no cache line there worth maintaining. The
+	 * caller's buffer is covered by its own ioctl.
 	 */
-	for (vma = find_vma(current->mm, start);
-	     vma && start < end;
-	     vma = vma->vm_next) {
+	for (vma = find_vma(current->mm, start); vma; vma = vma->vm_next) {
 		if (start < vma->vm_start || start >= vma->vm_end)
-			return 0;
-		if (end <= vma->vm_end)
-			return 1;
+			break;
+		mapped_end = min(end, vma->vm_end);
+		if (mapped_end >= end)
+			break;
 		start = vma->vm_end;
 	}
 
-	return ret;
+	if (mapped_end <= va)
+		return 0;
+
+	if (mapped_end - va != end - va) {
+		static unsigned long clip_count;
+
+		if ((clip_count++ & 0x3f) == 0)
+			pr_info("%s: clipped range %lx+%zx to %lx\n",
+				__func__, va, end - va, mapped_end - va);
+	}
+
+	*size = mapped_end - va;
+
+	return 1;
 }
 
 /* user va check
@@ -282,7 +295,7 @@ static int __cache_sync_by_range(struct ion_client *client,
 	if (ret) {
 		lock_vma = true;
 		mmap_read_lock(current->mm);
-		ret = ion_check_user_va(start, size);
+		ret = ion_check_user_va(start, &size);
 	}
 
 	if (!ret) {
@@ -300,31 +313,6 @@ static int __cache_sync_by_range(struct ion_client *client,
 	}
 
 start_sync:
-
-	/*
-	 * Decide by the address, not by what the caller claims.
-	 *
-	 * is_kernel_addr is a parameter the client supplies, and at least one of
-	 * them (the CCU, while loading its firmware) passes a kernel address while
-	 * asking for a user-space flush. The __*_dcache_user_area() helpers use
-	 * user_access macros, so a kernel pointer makes them fault:
-	 *
-	 *   pc : __flush_dcache_user_area+0x50/0x94
-	 *   Call trace:
-	 *    __flush_dcache_user_area
-	 *    ion_custom_ioctl
-	 *    ion_ioctl
-	 *    __arm64_sys_ioctl
-	 *    ...
-	 *    Kernel panic - not syncing
-	 *
-	 * Anything at or above TASK_SIZE cannot be a user address, and anything
-	 * below it cannot be a kernel one, so correct the flag before dispatch.
-	 */
-	if (start >= TASK_SIZE)
-		is_kernel_addr = 1;
-	else
-		is_kernel_addr = 0;
 
 	__ion_cache_mmp_start(sync_type, size, start);
 
