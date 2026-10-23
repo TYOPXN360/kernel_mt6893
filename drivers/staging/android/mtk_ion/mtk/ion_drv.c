@@ -183,20 +183,19 @@ static int vma_is_ion_node(struct vm_area_struct *vma)
  */
 static int ion_check_user_va(unsigned long va, size_t size)
 {
-	unsigned long addr;
-	char data;
-	unsigned long va_start = va;
-	unsigned long va_end;
+	struct vm_area_struct *vma;
+	unsigned long start = va;
+	unsigned long end;
 	int ret = 0;
 
-	va_end = va_start + size;
+	end = start + size;
 
 	/* overflow check */
-	if (unlikely(va_end < va_start))
+	if (unlikely(end < start))
 		return 0;
 
 	/*
-	 * Prove every page of the range is present, not just its endpoints.
+	 * Require the whole range to be backed by mapped VMAs.
 	 *
 	 * __ion_is_user_va() only touches the first and last byte, so a range
 	 * whose ends are mapped and whose middle is not passes it, and the cache
@@ -207,16 +206,24 @@ static int ion_check_user_va(unsigned long va, size_t size)
 	 *   pc : __flush_dcache_user_area
 	 *    _ion_ioctl
 	 *
-	 * Checking VMA coverage is not enough either: these buffers come from
-	 * dma-heap, not ION, so vma_is_ion_node() rejects them outright and the
-	 * flush would be refused for every legitimate caller. Probe each page
-	 * instead -- that is the property the cache maintenance actually needs.
+	 * Probing every page with get_user() would also find the hole, but it
+	 * costs one fixup-capable access per page -- 1024 of them for a 4MB
+	 * buffer, on every cache sync, every frame. That was enough to push the
+	 * ISP past its frame deadline (int_us 60ms against a 33ms budget) and
+	 * make it drop every frame, so keep this O(number of VMAs).
+	 *
+	 * Do not require vma_is_ion_node(): these buffers come from dma-heap, so
+	 * that test rejects every legitimate caller.
 	 */
-	for (addr = va_start; addr < va_end; addr += PAGE_SIZE) {
-		if (get_user(data, (char __user *)addr))
+	for (vma = find_vma(current->mm, start);
+	     vma && start < end;
+	     vma = vma->vm_next) {
+		if (start < vma->vm_start || start >= vma->vm_end)
 			return 0;
+		if (end <= vma->vm_end)
+			return 1;
+		start = vma->vm_end;
 	}
-	ret = 1;
 
 	return ret;
 }
