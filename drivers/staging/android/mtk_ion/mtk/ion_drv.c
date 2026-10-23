@@ -194,12 +194,37 @@ static int ion_check_user_va(unsigned long va, size_t size)
 	if (unlikely(va_end < va_start))
 		return 0;
 
-	vma = find_vma(current->mm, va_start);
-	if (!vma || va_start < vma->vm_start ||
-	    va_end > vma->vm_end) {
-		ret = 0;
-	} else {
-		ret = vma_is_ion_node(vma);
+	/*
+	 * Walk every VMA the range touches, not just the first one.
+	 *
+	 * A buffer is not required to live in a single VMA. Checking only the
+	 * one find_vma() returns lets a range that starts inside a valid ION
+	 * mapping and runs past its end pass this test, and the cache
+	 * maintenance that follows then walks into an unmapped page:
+	 *
+	 *   Unable to handle kernel paging request at virtual address 000000792a223000
+	 *   [000000792a223000] pgd=..., pud=..., pmd=..., pte=0000000000000000
+	 *   pc : __flush_dcache_user_area
+	 *    _ion_ioctl
+	 *
+	 * Require the whole range to be covered by contiguous ION VMAs.
+	 */
+	for (vma = find_vma(current->mm, va_start);
+	     vma && va_start < va_end;
+	     vma = vma->vm_next) {
+		if (va_start < vma->vm_start || va_start >= vma->vm_end) {
+			ret = 0;
+			break;
+		}
+		if (!vma_is_ion_node(vma)) {
+			ret = 0;
+			break;
+		}
+		if (va_end <= vma->vm_end) {
+			ret = 1;
+			break;
+		}
+		va_start = vma->vm_end;
 	}
 
 	return ret;
