@@ -278,6 +278,31 @@ static int __cache_sync_by_range(struct ion_client *client,
 
 start_sync:
 
+	/*
+	 * Decide by the address, not by what the caller claims.
+	 *
+	 * is_kernel_addr is a parameter the client supplies, and at least one of
+	 * them (the CCU, while loading its firmware) passes a kernel address while
+	 * asking for a user-space flush. The __*_dcache_user_area() helpers use
+	 * user_access macros, so a kernel pointer makes them fault:
+	 *
+	 *   pc : __flush_dcache_user_area+0x50/0x94
+	 *   Call trace:
+	 *    __flush_dcache_user_area
+	 *    ion_custom_ioctl
+	 *    ion_ioctl
+	 *    __arm64_sys_ioctl
+	 *    ...
+	 *    Kernel panic - not syncing
+	 *
+	 * Anything at or above TASK_SIZE cannot be a user address, and anything
+	 * below it cannot be a kernel one, so correct the flag before dispatch.
+	 */
+	if (start >= TASK_SIZE)
+		is_kernel_addr = 1;
+	else
+		is_kernel_addr = 0;
+
 	__ion_cache_mmp_start(sync_type, size, start);
 
 	switch (sync_type) {
