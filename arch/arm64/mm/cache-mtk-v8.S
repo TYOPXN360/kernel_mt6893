@@ -291,23 +291,36 @@ ENDPROC(dis_D_inner_flush_all)
  *	- size         - size in question
  */
 
+/*
+ * These three take a user virtual address, so PAN has to be cleared around the
+ * cache maintenance. uaccess_ttbr0_enable() is a no-op whenever the CPU has
+ * hardware PAN (ARM64_HAS_PAN), which leaves PSTATE.PAN set and makes the
+ * dcache instruction fault on the user address:
+ *
+ *   pc : __flush_dcache_user_area+0x50/0x94
+ *   esr: 0000000092000045 (Data Abort)
+ *   pstate: 80400005 (Nzcv daif +PAN -UAO)
+ *
+ * uaccess_enable_not_uao() is the variant that also drops PAN where UAO is
+ * absent, so use it here instead.
+ */
 ENTRY(__flush_dcache_user_area)
-	uaccess_ttbr0_enable x2, x3, x4
+	uaccess_enable_not_uao x2, x3, x4
 	dcache_by_line_op civac, sy, x0, x1, x2, x3
-	uaccess_ttbr0_disable x1, x2
+	uaccess_disable_not_uao x1, x2
 	ret
 ENDPROC(__flush_dcache_user_area)
 
 ENTRY(__clean_dcache_user_area)
-	uaccess_ttbr0_enable x2, x3, x4
+	uaccess_enable_not_uao x2, x3, x4
 	dcache_by_line_op cvac, sy, x0, x1, x2, x3
-	uaccess_ttbr0_disable x1, x2
+	uaccess_disable_not_uao x1, x2
 	ret
 ENDPROC(__clean_dcache_user_area)
 
 ENTRY(__inval_dcache_user_area)
 	add     x1, x1, x0
-	uaccess_ttbr0_enable x2, x3, x4
+	uaccess_enable_not_uao x2, x3, x4
 	dcache_line_size x2, x3
 	sub     x3, x2, #1
 	tst     x1, x3                          // end cache line aligned?
@@ -324,6 +337,6 @@ ENTRY(__inval_dcache_user_area)
 	cmp     x0, x1
 	b.lo    2b
 	dsb     sy
-	uaccess_ttbr0_disable x1, x2
+	uaccess_disable_not_uao x1, x2
 	ret
 ENDPROC(__inval_dcache_user_area)
