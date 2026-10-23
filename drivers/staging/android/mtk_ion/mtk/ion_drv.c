@@ -181,62 +181,33 @@ static int vma_is_ion_node(struct vm_area_struct *vma)
  * @return 0: check fail
  * @return 1: check pass
  */
-static int ion_check_user_va(unsigned long va, size_t *size)
+static int ion_check_user_va(unsigned long va, size_t size)
 {
-	struct vm_area_struct *vma;
-	unsigned long start = va;
-	unsigned long end = va + *size;
-	unsigned long mapped_end = va;
-
-	/* overflow check */
-	if (unlikely(end < va))
-		return 0;
+	unsigned long addr;
+	char data;
 
 	/*
-	 * Clamp the range to the part that is actually mapped.
+	 * Touch every page of the range so that it is actually resident before
+	 * the cache maintenance runs.
 	 *
-	 * The callers pass a range that runs off the end of a buffer: the CCU
-	 * asks to invalidate 0x3a020 bytes at 0x7c44677000 while the mapping
-	 * stops at 0x7c44692000, and the dcache instruction then walks into a
-	 * page whose PTE is empty:
+	 * A VMA covering the range is not enough. These buffers are mmapped
+	 * lazily, so a range can sit inside a valid VMA while individual pages
+	 * still have an empty PTE, and a dcache instruction does not fault
+	 * pages in -- it just aborts:
 	 *
-	 *   Unable to handle kernel paging request at virtual address 0000007c44692000
-	 *   [0000007c44692000] pgd=..., pud=..., pmd=..., pte=0000000000000000
-	 *   pc : __inval_dcache_user_area+0x74/0xbc
+	 *   Unable to handle kernel paging request at virtual address 0000006ff166d000
+	 *   [0000006ff166d000] pgd=..., pud=..., pmd=..., pte=0000000000000000
+	 *   pc : __flush_dcache_user_area+0x54/0x9c
 	 *    _ion_ioctl
 	 *
-	 * A VMA walk alone does not catch this: the address can sit inside a
-	 * VMA whose page has simply not been faulted in yet, and a cache
-	 * maintenance instruction does not fault pages in. Probing every page
-	 * with get_user() does catch it, but costs an uaccess entry per page
-	 * (1024 of them for a 4MB buffer, every frame) and pushes the ISP past
-	 * its frame deadline.
-	 *
-	 * Clamping instead is both cheap and correct: bytes past the mapping
-	 * hold no data, so there is no cache line there worth maintaining. The
-	 * caller's buffer is covered by its own ioctl.
+	 * The ranges involved are tens of pages (0x3c000 is 60), so one load
+	 * per page is cheap; it is also the only thing that both faults the
+	 * page in and tells us the range is sane.
 	 */
-	for (vma = find_vma(current->mm, start); vma; vma = vma->vm_next) {
-		if (start < vma->vm_start || start >= vma->vm_end)
-			break;
-		mapped_end = min(end, vma->vm_end);
-		if (mapped_end >= end)
-			break;
-		start = vma->vm_end;
+	for (addr = va; addr < va + size; addr += PAGE_SIZE) {
+		if (get_user(data, (char __user *)addr))
+			return 0;
 	}
-
-	if (mapped_end <= va)
-		return 0;
-
-	if (mapped_end - va != end - va) {
-		static unsigned long clip_count;
-
-		if ((clip_count++ & 0x3f) == 0)
-			pr_info("%s: clipped range %lx+%zx to %lx\n",
-				__func__, va, end - va, mapped_end - va);
-	}
-
-	*size = mapped_end - va;
 
 	return 1;
 }
@@ -295,7 +266,7 @@ static int __cache_sync_by_range(struct ion_client *client,
 	if (ret) {
 		lock_vma = true;
 		mmap_read_lock(current->mm);
-		ret = ion_check_user_va(start, &size);
+		ret = ion_check_user_va(start, size);
 	}
 
 	if (!ret) {
