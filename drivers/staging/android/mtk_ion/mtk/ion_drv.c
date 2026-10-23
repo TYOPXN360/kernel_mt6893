@@ -183,33 +183,26 @@ static int vma_is_ion_node(struct vm_area_struct *vma)
  */
 static int ion_check_user_va(unsigned long va, size_t size)
 {
-	unsigned long addr;
-	char data;
+	struct vm_area_struct *vma;
+	unsigned long va_start = va;
+	unsigned long va_end;
+	int ret = 0;
 
-	/*
-	 * Touch every page of the range so that it is actually resident before
-	 * the cache maintenance runs.
-	 *
-	 * A VMA covering the range is not enough. These buffers are mmapped
-	 * lazily, so a range can sit inside a valid VMA while individual pages
-	 * still have an empty PTE, and a dcache instruction does not fault
-	 * pages in -- it just aborts:
-	 *
-	 *   Unable to handle kernel paging request at virtual address 0000006ff166d000
-	 *   [0000006ff166d000] pgd=..., pud=..., pmd=..., pte=0000000000000000
-	 *   pc : __flush_dcache_user_area+0x54/0x9c
-	 *    _ion_ioctl
-	 *
-	 * The ranges involved are tens of pages (0x3c000 is 60), so one load
-	 * per page is cheap; it is also the only thing that both faults the
-	 * page in and tells us the range is sane.
-	 */
-	for (addr = va; addr < va + size; addr += PAGE_SIZE) {
-		if (get_user(data, (char __user *)addr))
-			return 0;
+	va_end = va_start + size;
+
+	/* overflow check */
+	if (unlikely(va_end < va_start))
+		return 0;
+
+	vma = find_vma(current->mm, va_start);
+	if (!vma || va_start < vma->vm_start ||
+	    va_end > vma->vm_end) {
+		ret = 0;
+	} else {
+		ret = vma_is_ion_node(vma);
 	}
 
-	return 1;
+	return ret;
 }
 
 /* user va check
