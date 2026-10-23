@@ -183,7 +183,8 @@ static int vma_is_ion_node(struct vm_area_struct *vma)
  */
 static int ion_check_user_va(unsigned long va, size_t size)
 {
-	struct vm_area_struct *vma;
+	unsigned long addr;
+	char data;
 	unsigned long va_start = va;
 	unsigned long va_end;
 	int ret = 0;
@@ -195,37 +196,27 @@ static int ion_check_user_va(unsigned long va, size_t size)
 		return 0;
 
 	/*
-	 * Walk every VMA the range touches, not just the first one.
+	 * Prove every page of the range is present, not just its endpoints.
 	 *
-	 * A buffer is not required to live in a single VMA. Checking only the
-	 * one find_vma() returns lets a range that starts inside a valid ION
-	 * mapping and runs past its end pass this test, and the cache
-	 * maintenance that follows then walks into an unmapped page:
+	 * __ion_is_user_va() only touches the first and last byte, so a range
+	 * whose ends are mapped and whose middle is not passes it, and the cache
+	 * maintenance that follows walks into the hole:
 	 *
-	 *   Unable to handle kernel paging request at virtual address 000000792a223000
-	 *   [000000792a223000] pgd=..., pud=..., pmd=..., pte=0000000000000000
+	 *   Unable to handle kernel paging request at virtual address 0000007b06ee7000
+	 *   [0000007b06ee7000] pgd=..., pud=..., pmd=..., pte=0000000000000000
 	 *   pc : __flush_dcache_user_area
 	 *    _ion_ioctl
 	 *
-	 * Require the whole range to be covered by contiguous ION VMAs.
+	 * Checking VMA coverage is not enough either: these buffers come from
+	 * dma-heap, not ION, so vma_is_ion_node() rejects them outright and the
+	 * flush would be refused for every legitimate caller. Probe each page
+	 * instead -- that is the property the cache maintenance actually needs.
 	 */
-	for (vma = find_vma(current->mm, va_start);
-	     vma && va_start < va_end;
-	     vma = vma->vm_next) {
-		if (va_start < vma->vm_start || va_start >= vma->vm_end) {
-			ret = 0;
-			break;
-		}
-		if (!vma_is_ion_node(vma)) {
-			ret = 0;
-			break;
-		}
-		if (va_end <= vma->vm_end) {
-			ret = 1;
-			break;
-		}
-		va_start = vma->vm_end;
+	for (addr = va_start; addr < va_end; addr += PAGE_SIZE) {
+		if (get_user(data, (char __user *)addr))
+			return 0;
 	}
+	ret = 1;
 
 	return ret;
 }
