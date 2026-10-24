@@ -8207,6 +8207,7 @@ page_owner=on loop.max_part=7";
 
 	mt_charger: mt_charger {
 		compatible = "mediatek,mt-charger";
+		battery-67w;
 		bootmode = <&chosen>;
 	};
 
@@ -8237,6 +8238,15 @@ page_owner=on loop.max_part=7";
 	charger: charger {
 		compatible = "mediatek,charger";
 		algorithm_name = "SwitchCharging2";
+		/*
+		 * This board charges through the primary charger (chg1) and has
+		 * no quinary charger. battery_67w is the flag that selects that
+		 * path everywhere in charger_agate -- including the only place
+		 * that votes a USB input current limit. With it clear nothing
+		 * ever voted, so AICR stayed at the 100mA default and the phone
+		 * effectively could not charge.
+		 */
+		battery_67w;
 		/* enable_sw_jeita; */
 		/* enable_pe_plus; */
 		/* enable_pe_2; */

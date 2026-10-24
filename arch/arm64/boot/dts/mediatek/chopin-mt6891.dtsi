@@ -189,6 +189,7 @@ this file is only for attribution of chopin
 	mi,pd-bus-curr-max = <6200>;
 	mi,pd-non-ffc-bat-volt-max = <4450>;
 	mi,cp-sec-enable;
+	battery-67w;
 	mi,pd-power-max = <67>; /*charge power max : 67W */
 	mi,cp-master-disable-fisrt;
 };
