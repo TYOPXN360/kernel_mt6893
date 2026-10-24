@@ -626,7 +626,20 @@ int mtk_pe40_get_init_watt(struct charger_manager *pinfo)
 	int vbus1, ibus1;
 	int vbus2, ibus2;
 	int vbat1, vbat2;
-	int voltage = 0, input_current = 1000, actual_current = 0;
+	/*
+	 * Start from the PE4.0 bus current limit rather than 1A. This value is
+	 * what gets voted as the input limit before the first measurement, and
+	 * the measurement result decides whether the adapter is raised at all:
+	 *
+	 *   ICL=1000mA -> request 10.6V, but only 907mA flows -> watt=9.98W
+	 *   pe40_get_setting_by_watt: 5000 * 2580 = 12.9W >= 9.98W -> vbus=5000
+	 *
+	 * i.e. the 1A limit throttled the probe until "5V is enough" became
+	 * true, so the phone stayed at 5V and charged at ~4W. With the probe
+	 * running at the full limit the measured power exceeds what 5V can
+	 * deliver and PE4.0 actually raises the adapter instead of giving up.
+	 */
+	int voltage = 0, input_current = 3000, actual_current = 0;
 	int voltage1 = 0, adapter_ibus;
 	bool is_enable = false, is_chip_enable = false;
 	int i;
