@@ -1554,14 +1554,23 @@ int charger_get_vbus(void)
 {
 	int ret = 0;
 	int vchr = 0;
+	struct charger_device *chg;
 
 	if (pinfo == NULL)
 		return 0;
 
-	if (pinfo->battery_67w)
-		ret = charger_dev_get_vbus(pinfo->chg1_dev, &vchr);
-	else
-		ret = charger_dev_get_vbus(pinfo->chg5_dev, &vchr);
+	/*
+	 * chopin has no quinary charger, so chg5_dev stays NULL and this read
+	 * came back -524 -- which the usb power supply then reported as its
+	 * voltage. The PD policy consumes that value to decide whether VBUS is
+	 * sane before raising it for the charge pump, so a bogus -524 keeps the
+	 * whole fast-charge path from ever starting. Fall back to the charger
+	 * that is actually present.
+	 */
+	chg = pinfo->battery_67w ? pinfo->chg1_dev : pinfo->chg5_dev;
+	if (!chg)
+		chg = pinfo->chg1_dev;
+	ret = charger_dev_get_vbus(chg, &vchr);
 
 	if (ret < 0) {
 		chr_err("%s: get vbus failed: %d\n", __func__, ret);
