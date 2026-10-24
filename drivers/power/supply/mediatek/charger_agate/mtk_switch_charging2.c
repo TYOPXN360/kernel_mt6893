@@ -885,7 +885,18 @@ static int mtk_switch_chr_pe40_init(struct charger_manager *info)
 
 	info->leave_pe4 = false;
 
-	return 0;
+	/*
+	 * Initialise the PE4.0 state machine, the way mtk_switch_charging.c
+	 * does for the older algorithm. SwitchCharging2 dropped this call, so
+	 * pe40_run() had state that was never set up and never reached the
+	 * voltage request.
+	 *
+	 * The symptom: PE4.0 was entered ("enter PE4.0!") and voted a 1A input
+	 * limit (USBIN_PE40_INFT_1ST_REQUEST_VOTER), but no pe40_pd_req ever
+	 * appeared and VBUS stayed at 5V -- AICR could reach 3000mA while the
+	 * port never left 5V, so charging plateaued around 2.5W.
+	 */
+	return mtk_pe40_init_state(info);
 }
 
 static int select_pe40_charging_current_limit(struct charger_manager *info)
