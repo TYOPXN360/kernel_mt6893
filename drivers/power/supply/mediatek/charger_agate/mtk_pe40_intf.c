@@ -744,8 +744,26 @@ int mtk_pe40_init_state(struct charger_manager *pinfo)
 	mtk_pe40_init_cap(pinfo);
 	pinfo->pe4.is_connect = true;
 	voltage = 0;
+	/*
+	 * Probe at the PE4.0 power tier, not 5W.
+	 *
+	 * actual_current is derived from the requested wattage (watt / vbus), and
+	 * it is what gets passed as the current for the first request. Probing at
+	 * 5W yields 1000mA, which is then voted as the input limit, so the first
+	 * measurement is throttled to ~907mA at 10.6V and reports 9.98W. The
+	 * later pe40_get_setting_by_watt() call sees that 5V can already deliver
+	 * 12.9W, chooses 5V, and PE4.0 gives up:
+	 *
+	 *   [pe40_vbus] vbus1:10656 ibus1:907 ... watt:9977000
+	 *   pe40_get_setting_by_watt: ... vbus:5000
+	 *   pe40_stop / leave pe4
+	 *
+	 * Probing at 27W asks for a current the adapter tier actually supports,
+	 * so the measured wattage exceeds what 5V can supply and the voltage is
+	 * raised for real.
+	 */
 	mtk_pe40_get_setting_by_watt(pinfo, &voltage, &adapter_ibus,
-		&actual_current, 5000000, &input_current);
+		&actual_current, 27000000, &input_current);
 
 	ret = mtk_pe40_pd_1st_request(pinfo, voltage, actual_current,
 		actual_current);
