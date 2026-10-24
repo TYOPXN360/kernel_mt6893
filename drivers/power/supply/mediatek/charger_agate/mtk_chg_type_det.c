@@ -1620,7 +1620,19 @@ static int mt_charger_probe(struct platform_device *pdev)
 	mt_chg->chg5_dev = NULL;
 
 	mt_chg->chg_desc.name = "charger";
-	mt_chg->chg_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
+	/*
+	 * Report MAINS rather than UNKNOWN. The framework maps a power supply to
+	 * chargerAcOnline/chargerUsbOnline/chargerWirelessOnline purely from this
+	 * type, so with UNKNOWN the charger was counted in none of them:
+	 *
+	 *   AC powered: false / USB powered: false / Wireless powered: false
+	 *
+	 * even though the battery was genuinely charging. That is why the UI
+	 * showed no charging indicator (and some builds render the unknown case
+	 * as "wireless charging") while capacity kept rising. ONLINE=1 still
+	 * gates it, so this only claims a wired charger while one is attached.
+	 */
+	mt_chg->chg_desc.type = POWER_SUPPLY_TYPE_MAINS;
 	mt_chg->chg_desc.properties = mt_charger_properties;
 	mt_chg->chg_desc.num_properties = ARRAY_SIZE(mt_charger_properties);
 	mt_chg->chg_desc.set_property = mt_charger_set_property;
