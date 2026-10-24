@@ -347,9 +347,15 @@ late_initcall(chopin_crumb_flush_init);
 #include <linux/workqueue.h>
 
 #define CRUMB_KEY		KEY_VOLUMEDOWN
-#define CRUMB_PRESSES		5
-/* Long enough to be deliberate, short enough to stay convenient. */
-#define CRUMB_WINDOW_MS		3000
+/*
+ * Five presses in three seconds turned out to fire while merely changing
+ * the volume: holding volume-down and letting the key repeat, or tapping it
+ * a few times in a row, both reach five within the window. Require a fast
+ * burst that nobody produces by accident -- eight presses inside two
+ * seconds -- while still being usable on purpose.
+ */
+#define CRUMB_PRESSES		8
+#define CRUMB_WINDOW_MS		2000
 
 static unsigned int crumb_presses;
 static unsigned long crumb_first_ms;
@@ -361,7 +367,7 @@ static unsigned long crumb_first_ms;
  */
 static void crumb_trigger(struct work_struct *w)
 {
-	pr_emerg("mediatek-crumb: five presses, dumping log before re-entry\n");
+	pr_emerg("mediatek-crumb: volume-down burst, dumping log before re-entry\n");
 
 	/*
 	 * KMSG_DUMP_OOPS is the reason pstore records as dmesg-ramoops-N,
