@@ -281,6 +281,7 @@ struct usbpd_pm {
 	bool		cp_sec_enable;
 	bool		sc_bypass_enable;
 	bool		battery_67w;
+	bool		cp_master_dis_first;
 
 	/* jeita or thermal related */
 	bool			jeita_triggered;

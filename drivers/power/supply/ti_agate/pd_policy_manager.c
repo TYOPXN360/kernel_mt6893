@@ -583,10 +583,19 @@ static void usbpd_check_cp_psy(struct usbpd_pm *pdpm)
 {
 	if (!pdpm->cp_psy) {
 		if (pm_config.cp_sec_enable) {
-			if (pdpm->battery_67w)
+			/*
+			 * Boards that set mi,cp-master-disable-fisrt (chopin does)
+			 * drive the charge pump through the slave, matching
+			 * charger_name = "quaternary_chg" in their device tree.
+			 * Picking by battery_67w alone sent chopin looking for a
+			 * bq25980 that this board does not populate, so cp_psy
+			 * stayed NULL, the CP never got enabled and charging fell
+			 * back to ~1.5A on the main charger.
+			 */
+			if (!pdpm->cp_master_dis_first)
 				pdpm->cp_psy = power_supply_get_by_name("bq2597x-master");
 			else
-				pdpm->cp_psy = power_supply_get_by_name("bq25980-master");
+				pdpm->cp_psy = power_supply_get_by_name("bq2597x-slave");
 		} else {
 			if (pdpm->battery_67w)
 				pdpm->cp_psy = power_supply_get_by_name("bq2597x-standalone");
@@ -597,8 +606,13 @@ static void usbpd_check_cp_psy(struct usbpd_pm *pdpm)
 			pr_err("cp_psy not found\n");
 	}
 
-	if (!pdpm->ch3_dev)
-		pdpm->ch3_dev = get_charger_by_name("tertiary_chg");
+	if (!pdpm->cp_master_dis_first) {
+		if (!pdpm->ch3_dev)
+			pdpm->ch3_dev = get_charger_by_name("tertiary_chg");
+	} else {
+		if (!pdpm->ch4_dev)
+			pdpm->ch4_dev = get_charger_by_name("quaternary_chg");
+	}
 }
 
 static void usbpd_check_cp_sec_psy(struct usbpd_pm *pdpm)
@@ -2078,6 +2092,9 @@ static int pd_policy_parse_dt(struct usbpd_pm *pdpm)
 				"mi,sc_bypass_enable");
 
 	pdpm->battery_67w = of_property_read_bool(node, "battery-67w");
+
+	pdpm->cp_master_dis_first = of_property_read_bool(node,
+				"mi,cp-master-disable-fisrt");
 
 	rc = of_property_read_u32(node, "mi,pd-power-max", &pdpm->pd_power_max);
 	pr_info("pd-power-max:%d\n", pdpm->pd_power_max);
