@@ -440,8 +440,26 @@ int pe40_init_state(void)
 	pe4->is_connect = true;
 
 	voltage = 0;
+	/*
+	 * Probe at the PE4.0 tier, not 5W.
+	 *
+	 * actual_current is derived from the requested wattage (watt / vbus) and
+	 * is what the first request votes as its input limit. At 5W that is
+	 * 1000mA, so the 10.6V measurement is throttled to ~907mA and reports
+	 * 9.98W; pe40_get_setting_by_watt() then finds that 5V already delivers
+	 * that much (5000 * 2580 = 12.9W) and keeps 5V, which is why PE4.0
+	 * bailed out with "leave pe4" and charging stayed near 4W:
+	 *
+	 *   [pe40_vbus] vbus1:10656 ibus1:907 ... watt:9977000
+	 *   pe40_get_setting_by_watt: ... vbus:5000
+	 *   pe40_stop / leave pe4
+	 *
+	 * Probing at 27W asks for a current the adapter tier actually supports,
+	 * so the measured wattage exceeds what 5V can supply and the voltage is
+	 * genuinely raised.
+	 */
 	pe40_get_setting_by_watt(&voltage, &adapter_ibus,
-		&actual_current, 5000000, &input_current);
+		&actual_current, 27000000, &input_current);
 
 	ret = pe40_pd_1st_request(voltage, actual_current,
 		actual_current);
