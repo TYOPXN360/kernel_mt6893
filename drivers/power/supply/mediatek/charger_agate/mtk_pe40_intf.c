@@ -402,7 +402,13 @@ int mtk_pe40_get_setting_by_watt(struct charger_manager *pinfo, int *voltage,
 		/* is 5v ok ? */
 		if (max_vbus >= 5000 &&
 			pe40_cap->min_mv[i] <= 5000 &&
-			5000 * pe40->max_charger_ibus >= watt) {
+			/*
+			 * Keep 5V only when it has real headroom; see mtk_pe40.c. The
+			 * probe runs with the charge pump idle, so an as-is comparison
+			 * always concludes "5V is enough" and the step-up never
+			 * happens. Require ~15% margin.
+			 */
+			5000 * pe40->max_charger_ibus * 85 / 100 >= watt) {
 			vbus = 5000;
 			ibus = watt / 5000;
 			ibus_setting = max_ibus;

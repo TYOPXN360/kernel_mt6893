@@ -278,7 +278,16 @@ int pe40_get_setting_by_watt(int *voltage,
 		/* is 5v ok ? */
 		if (max_vbus >= 5000 &&
 			pe40_cap->min_mv[i] <= 5000 &&
-			5000 * pe4->max_charger_ibus >= watt) {
+			/*
+			 * Keep 5V only when it has real headroom. Comparing against
+			 * the measured wattage as-is is self-defeating: the probe runs
+			 * with the charge pump idle, so it measures a lossy 5V-style
+			 * path and concludes 5V suffices (12.9W >= 12.4W), PE4.0 gives
+			 * up, the pump is switched off, and the phone never leaves 5V.
+			 * Require ~15% margin so a genuine surplus is needed before
+			 * skipping the step-up.
+			 */
+			5000 * pe4->max_charger_ibus * 85 / 100 >= watt) {
 			vbus = 5000;
 			ibus = watt / 5000;
 			ibus_setting = max_ibus;
