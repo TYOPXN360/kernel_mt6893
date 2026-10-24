@@ -627,6 +627,27 @@ int pe40_init_state(void)
 				&actual_current, watt, &input_current);
 	if (voltage <= 0)
 		chr_err("abnormal voltage: %d\n", voltage);
+
+	/*
+	 * watt comes from an input-side measurement taken while the charge pump
+	 * is idle, so voltage = watt / ibus lands near 5V:
+	 *
+	 *   [pe40_vbus] vbus1:10575 ibus1:1160 watt:12760000
+	 *   pe40_get_setting_by_watt:[3,0]12760000 vbus:5361
+	 *
+	 * The input wattage is not what the battery receives -- with the pump
+	 * idle the main charger drops 10.5V to ~4.3V at roughly 34% efficiency,
+	 * so the phone draws 12W in and puts about 4W into the battery. Feeding
+	 * that 5.36V back to the adapter keeps the pump idle and holds charging
+	 * at ~4W indefinitely.
+	 *
+	 * The pump only becomes usable once VBUS is around twice the battery
+	 * voltage, which is exactly what the FC2 path asks for. Raise the
+	 * request to that point instead of trusting the pump-idle measurement.
+	 */
+	if (voltage > 0 && voltage < battery_get_bat_voltage() * 2)
+		voltage = battery_get_bat_voltage() * 2;
+
 	pe4->avbus = voltage / 10 * 10;
 	ret = pe40_pd_request(&pe4->avbus, &adapter_ibus,
 				input_current);
