@@ -8251,7 +8251,14 @@ page_owner=on loop.max_part=7";
 		/* enable_pe_plus; */
 		/* enable_pe_2; */
 		/* enable_pe_3; */
-		/* enable_pe_4; */
+		/*
+		 * PE4.0 is the path that actually negotiates a high voltage for
+		 * the charge pump. The station reports pps:1 hv:1 but pe40_ready:0,
+		 * and with no other module requesting a voltage the port stayed at
+		 * 5V: AICR reached 3000mA yet VBUS never moved, so charging
+		 * plateaued around 1.2A.
+		 */
+		enable_pe_4;
 		enable_type_c;
 		power_path_support;
 		enable_dynamic_mivr;
