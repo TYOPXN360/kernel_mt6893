@@ -552,3 +552,11 @@ CONFIG_TOUCHSCREEN_MTK_NT36xxx=y
 CONFIG_TOUCHSCREEN_NT36xxx=y
 CONFIG_TOUCHSCREEN_NT36xxx_HOSTDL_SPI=y
 CONFIG_TOUCHSCREEN_NVT_DEBUG_FS=y
+
+# KernelSU: 4.19 is a Non-GKI kernel, so the tracepoint redirect hooks are
+# not available (drivers/kernelsu/Kbuild rejects them outright). Use the
+# manual hooks instead; on 4.19 the LSM-based auto hooks cover setuid,
+# init.rc and input, so no kernel source edits beyond the static exports
+# are needed.
+CONFIG_KSU_MANUAL_HOOK=y
+# CONFIG_KSU_TRACEPOINT_HOOK is not set
