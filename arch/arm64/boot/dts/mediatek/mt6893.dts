@@ -8247,6 +8247,13 @@ page_owner=on loop.max_part=7";
 		 * effectively could not charge.
 		 */
 		battery_67w;
+		/*
+		 * Keep the PE4.0 request at 9V. The charge pump divides VBUS by two,
+		 * so 9V lands at 4.5V -- just above this board's 4.45V battery CV.
+		 * The default ceiling of 11V would ask for a voltage the pump
+		 * cannot divide down to anything usable.
+		 */
+		pe40_max_vbus = <9000>;
 		/* enable_sw_jeita; */
 		/* enable_pe_plus; */
 		/* enable_pe_2; */

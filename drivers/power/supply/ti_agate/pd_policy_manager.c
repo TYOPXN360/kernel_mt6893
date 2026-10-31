@@ -928,8 +928,15 @@ static void usbpd_pm_sc8551_bypass_mode(struct usbpd_pm *pdpm)
 		pdpm->request_current = min(pdpm->request_current, MAX_BYPASS_CURRENT_MA);
 		adapter_set_cap_bq(pdpm->request_voltage, pdpm->request_current);
 
-		if (pdpm->cp.vbus_volt >(102 /100) * pdpm->cp.vbat_volt
-				&& pdpm->cp.vbus_volt < (117 /100) * pdpm->cp.vbat_volt) {
+		/*
+		 * (102/100) and (117/100) are integer divisions and both equal 1,
+		 * so this used to read "vbus > vbat && vbus < vbat" -- always
+		 * false. usbpd_pm_enable_cp(pdpm, true) below therefore never ran
+		 * and the charge pump was never switched on. Multiply first to
+		 * keep the intended 1.02x-1.17x window.
+		 */
+		if (pdpm->cp.vbus_volt > 102 * pdpm->cp.vbat_volt / 100
+				&& pdpm->cp.vbus_volt < 117 * pdpm->cp.vbat_volt / 100) {
 			usbpd_pm_sc8551_set_charge_mode(pdpm, SC8551_CHARGE_MODE_BYPASS);
 			usbpd_pm_enable_cp(pdpm, true);
 			msleep(30);
